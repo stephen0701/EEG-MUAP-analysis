@@ -1,6 +1,5 @@
 # %%
 """
-
 Convert deconvolution firing patterns (coefficients per sample) to spike times.
 Designed to work with the multi-dataset structure and save results in individual dataset folders.
 
@@ -18,6 +17,7 @@ References:
 - Holobar & Zazula; Negro, Holobar & Farina et al. EMG decomposition literature (peak-based spike extraction)
 - MU firing rate physiology references: De Luca et al.
 """
+
 import pandas as pd
 import numpy as np
 from scipy import signal
