@@ -114,6 +114,7 @@ def enforce_min_isi_nms(peaks: np.ndarray,
     peaks_sorted = peaks[order]
     keep_mask = np.zeros(len(arr), dtype=bool)
     kept = []
+    suppressed = []
     
     for p in peaks_sorted:
         if not keep_mask[p]:
@@ -121,9 +122,12 @@ def enforce_min_isi_nms(peaks: np.ndarray,
             start = max(0, p - min_samples)
             end = min(len(arr), p + min_samples + 1)
             keep_mask[start:end] = True
+        else:
+            suppressed.append(int(p))
     
     kept_sorted = np.array(sorted(kept), dtype=int)
-    return kept_sorted
+    suppressed_sorted = np.array(sorted(suppressed), dtype=int)
+    return kept_sorted, suppressed_sorted
 
 
 def convert_firing_to_spikes(firing_pattern: np.ndarray,
@@ -135,7 +139,7 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
                             min_isi_ms: float = 30.0,
                             min_prominence: Optional[float] = None,
                             return_binary: bool = True
-                            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+                            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray]:
     """
     Convert firing pattern to spike indices and times.
     
@@ -187,7 +191,7 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
 
     # Enforce minimum ISI by NMS (non-maximum suppression)
     min_samples = max(1, int(round(min_isi_ms * fs / 1000.0)))
-    spike_indices = enforce_min_isi_nms(raw_peaks, processed, min_samples=min_samples)
+    spike_indices, suppressed_indices = enforce_min_isi_nms(raw_peaks, processed, min_samples=min_samples)
 
     # Binary vector
     binary_vec = np.zeros(n, dtype=int)
@@ -196,7 +200,7 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
 
     spike_times_s = spike_indices.astype(float) / float(fs)
 
-    return spike_indices, spike_times_s, binary_vec, thr
+    return spike_indices, spike_times_s, binary_vec, thr, suppressed_indices
 
 
 def analyze_spike_statistics(spike_times_s: np.ndarray) -> Dict[str, float]:
@@ -370,6 +374,49 @@ def plot_spike_detection(firing_pattern: np.ndarray, fs: float,
     
     return fig
 
+def plot_kernels_and_spikes(kernels: np.ndarray,
+                            spike_results: Dict,
+                            fs: float,
+                            channel_name: str = "Channel"):
+    """
+    Plot kernels (left) and spike trains (right) for each component.
+    kernels: shape (kernel_len, n_components)
+    spike_results: dict of {comp_name: comp_results} from process_single_dataset_spikes
+    fs: sampling rate
+    """
+    n_components = kernels.shape[1]
+    kernel_len = kernels.shape[0]
+    kernel_t = np.linspace(-kernel_len//2/fs, kernel_len//2/fs, kernel_len)
+
+    fig, axs = plt.subplots(n_components, 2, figsize=(10, 3.5 * n_components))
+    if n_components == 1:
+        axs = np.array([axs])
+
+    for i, (comp_name, comp_data) in enumerate(spike_results['components'].items()):
+        # Left: kernel
+        axs[i, 0].plot(kernel_t, kernels[:, i], color='C0')
+        axs[i, 0].set_title(f"{channel_name} — Kernel {i+1}")
+        axs[i, 0].set_xlabel("Time (s)")
+        axs[i, 0].set_ylabel("Amplitude (a.u.)")
+        axs[i, 0].grid(True, alpha=0.3)
+
+        # Right: spikes (binary vector)
+        spike_indices = comp_data['spike_indices']
+        n_samples = len(comp_data['firing_pattern'])
+        t = np.arange(n_samples) / fs
+        spike_vec = np.zeros(n_samples)
+        spike_vec[spike_indices] = 1
+
+        axs[i, 1].stem(t, spike_vec, markerfmt=' ', basefmt=' ')
+        axs[i, 1].set_title(f"{channel_name} — Spikes {i+1}")
+        axs[i, 1].set_xlabel("Time (s)")
+        axs[i, 1].set_ylabel("Spike (0/1)")
+        axs[i, 1].set_ylim(-0.1, 1.1)
+        axs[i, 1].grid(True, alpha=0.3)
+
+    fig.suptitle(f"{channel_name}: Kernels and Spikes", fontsize=15)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    return fig
 
 def load_npz_data(dataset_path: str) -> Dict:
     """
@@ -409,6 +456,11 @@ def load_npz_data(dataset_path: str) -> Dict:
                 for ch_label in channel_labels:
                     ch_data = {}
                     
+                    # Look for kernel data (K matrix)
+                    k_key = f'{ch_label}_K'
+                    if k_key in data:
+                        ch_data['kernel'] = data[k_key]
+
                     # Look for firing pattern data (X matrix)
                     x_key = f'{ch_label}_X'
                     if x_key in data:
@@ -478,7 +530,7 @@ def process_single_dataset_spikes(dataset_path: str,
     """
     if spike_params is None:
         spike_params = {
-            'use_percentile': 95,
+            'use_percentile': 97,
             'k_mad': 3.0,
             'smooth_sigma_ms': 0.0,
             'min_isi_ms': 30.0,
@@ -538,10 +590,13 @@ def process_single_dataset_spikes(dataset_path: str,
                     continue
                 
                 # Extract spikes from this component
-                spike_indices, spike_times, binary_vec, threshold = convert_firing_to_spikes(
+                spike_indices, spike_times, binary_vec, threshold, suppressed_indices = convert_firing_to_spikes(
                     component_data, fs, **spike_params
                 )
                 
+                # Print suppressed indices
+                print(f"    Component {comp_idx+1}: suppressed_indices = {suppressed_indices}")
+
                 # Analyze statistics
                 stats = analyze_spike_statistics(spike_times)
                 
@@ -581,7 +636,17 @@ def process_single_dataset_spikes(dataset_path: str,
                 ch_results['n_components'] = len(ch_results['components'])
                 ch_results['original_shape'] = firing_pattern.shape
                 mode_results[ch_label] = ch_results
-        
+
+            # Plot kernels and spikes if available
+            if plot_results and 'kernel' in mode_data[ch_label]:
+                kernels = mode_data[ch_label]['kernel']  # shape (kernel_len, n_components)
+                fig = plot_kernels_and_spikes(kernels, ch_results, fs, channel_name=ch_label)
+                plot_filename = f'kernels_spikes_{mode}_{ch_label}_{dataset_name}.png'
+                plot_path = os.path.join(output_dir, plot_filename)
+                fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+                print(f"Kernel+Spikes plot saved: {plot_filename}")
+
         if mode_results:
             spike_results[mode] = mode_results
     
@@ -708,7 +773,7 @@ if __name__ == "__main__":
     fs = 1000.0  # Sampling rate in Hz
 
     # path2_02  percentile threshold
-    test_dataset = os.path.join(base_path, 'path2_02')
+    test_dataset = os.path.join(base_path, 'path2_04')
     if os.path.exists(test_dataset):
         print("\n=== Percentile Threshold Detection for path2_02 ===")
         spike_params = {
