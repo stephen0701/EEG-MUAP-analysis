@@ -41,7 +41,6 @@ class AlternativeProcessor:
     2. Apply notch filter (remove powerline noise)
     3. Apply highpass filter (remove low-frequency drift)
     4. Apply lowpass filter (remove high-frequency noise)
-    5. Min-max normalization (scale signal to [0, 1])
     """
     def __init__(self, fs=1000, notch_f0=60, hp_fc=40, lp_fc=450):
         self.fs = fs
@@ -56,7 +55,7 @@ class AlternativeProcessor:
         self.b_lp, self.a_lp = butter(4, lp_wn, btype='lowpass', output='ba')
 
     def process(self, x):
-        """Apply detrend, notch, highpass, lowpass filters, then min-max normalize to [0, 1]."""
+        """Apply detrend, notch, highpass, lowpass filters."""
         y = detrend(x)
         y = filtfilt(self.b_notch, self.a_notch, y)
         y = filtfilt(self.b_hp, self.a_hp, y)
