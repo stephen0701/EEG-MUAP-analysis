@@ -12,6 +12,7 @@ Compact summary:
 
 import os
 import json
+from signal import signal
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -107,16 +108,15 @@ def save_results_list_to_npz(results, npz_path, meta=None, channel_names=None, c
         np.savez(npz_path, **npz_dict)
 
 # ------------ end IO utilities ---------------
-
 def estimate_sigmas_from_gamma(signal, fs, mode):
     """
     Estimate Gaussian kernel sigmas from EMG PSD.
     mode: 'multi' -> linear fit on gamma vs f^2 -> symmetric two kernels
           'single' -> quadratic fit, return three percentile-based sigmas
     """
-    nperseg = min(512, max(128, len(signal)))
+    nperseg = min(4096, len(signal))
     noverlap = nperseg // 2
-    nfft = max(256, 2**int(np.ceil(np.log2(nperseg))))
+    nfft = max(nperseg, 2**int(np.ceil(np.log2(nperseg))))
 
     f, pxx = welch(signal, fs=fs, window='hamming',
                    nperseg=nperseg, noverlap=noverlap, nfft=nfft, axis=0)
@@ -127,9 +127,10 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
         warnings.warn("No positive frequency bins from welch; returning default sigmas.")
         return [0.003, 0.003] if mode == 'multi' else [0.003, 0.003, 0.003]
 
-    f_med = np.median(f); f_std = np.std(f)
-    mask2 = (f >= (f_med - f_std)) & (f <= (f_med + 2*f_std))
-    f_sel = f[mask2]; pxx_sel = pxx[mask2]
+    #f_med = np.median(f); f_std = np.std(f)
+    #mask2 = (f >= (f_med - f_std)) & (f <= (f_med + 2*f_std))
+    #f_sel = f[mask2]; pxx_sel = pxx[mask2]
+    f_sel = f; pxx_sel = pxx
 
     if f_sel.size < 3:
         warnings.warn('Selected PSD band too small — falling back to full positive frequency band for sigma estimation.', UserWarning)
@@ -147,6 +148,7 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
     if mode == 'multi':
         p = np.polyfit(f2, gamma, 1)
         slope = p[0]
+        print(f"[DEBUG] multi mode: slope={slope:.6e}")
         if slope >= 0:
             warnings.warn("slope >= 0 from gamma vs f^2 fit — check PSD or selection band.")
         sigma2 = -slope / (4 * np.pi**2)
@@ -156,6 +158,7 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
     else:
         p = np.polyfit(f2, gamma, 2)  # a f^4 + b f^2 + c
         a, b = p[0], p[1]
+        print(f"[DEBUG] single mode: a={a:.6e}, b={b:.6e}")
         pctls = [0.15, 0.5, 0.85]
         sigmas = []
 
@@ -173,17 +176,25 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
         # ensure strictly increasing cdf for interp (last element should be 1)
         cdf[-1] = 1.0
 
+        f0_list = []
+        slope_list = []
+        fallback_list = []
+
         for pc in pctls:
             # interpolate percentile to get a smooth f0 (avoid discrete index jumps)
             f0 = np.interp(pc, cdf, f_sel)
+            f0_list.append(f0)
 
             # compute derivative of polyfit (gamma = a*(f^2)^2 + b*(f^2) + c)
             # derivative wrt (f^2) is: dgamma/d(f^2) = 2*a*(f^2) + b
             f0_sq = f0**2
             slope = 2.0 * a * f0_sq + b
+            slope_list.append(slope)
 
+            fallback = False
             if slope >= 0:
                 warnings.warn(f"slope >= 0 from gamma fit at PSD-weighted percentile {pc:.2f} — using fallback linear fit.")
+                fallback = True
                 # fallback: do linear fit on full f2 vs gamma (like 'multi' mode) and evaluate at f0
                 p_lin = np.polyfit(f2, gamma, 1)
                 slope = p_lin[0]
@@ -195,10 +206,31 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
             else:
                 sigma = np.sqrt(sigma2)
             sigmas.append(sigma)
+            fallback_list.append(fallback)
 
-        print("DEBUG sigmas:", sigmas)
+        print(f"[DEBUG] f0_list={f0_list}")
+        print(f"[DEBUG] slope_list={slope_list}")
+        print(f"[DEBUG] fallback_list={fallback_list}")
+        print(f"[DEBUG] sigmas:", sigmas)
+
+        # plot PSD and percentiles for visual debug
+        try:
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=(8,4))
+            plt.plot(f_sel, pxx_sel, label='PSD selected')
+            for i, pc in enumerate(pctls):
+                plt.axvline(f0_list[i], color='r', linestyle='--', label=f'Percentile {pc:.2f}')
+            plt.xlabel('Frequency (Hz)')
+            plt.ylabel('PSD')
+            plt.title('PSD and Percentile Frequencies')
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print("[DEBUG] plot failed:", e)
+
         return np.array(sigmas)
-        
+
 def build_kernels(sigmas, fs, mode):
     """
     Build first-derivative Gaussian kernels.
