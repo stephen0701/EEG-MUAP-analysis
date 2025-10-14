@@ -1,1 +1,1 @@
-# EEG-multi-kernel-deconvolution-EMG
+# EEG-MUAP-analysis
