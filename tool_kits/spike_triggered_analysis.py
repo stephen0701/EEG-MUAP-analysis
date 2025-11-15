@@ -10,6 +10,7 @@ Key Features:
 - Multi-frequency band analysis (delta, theta, mu/alpha, beta, low gamma)
 - Movement state-specific analysis
 - Integration with neural_data_movement_segmentor data structure
+- **Works with relative time coordinates (0-based) from segmented data**
 
 EEG Frequency Bands:
 - Delta: 1-4 Hz (deep sleep, unconscious processes)
@@ -22,6 +23,11 @@ EEG Frequency Bands:
 Target EEG Channels:
 - Motor control: Cz, C3, C4, FCz, FC3, FC4, CPz, CP3, CP4 (use mu band)
 - Visual processing (event trigger): O1, O2, Oz (use alpha band)
+
+Time Coordinate System:
+- All data uses relative time coordinates starting from 0 within each movement segment
+- EEG and spike times are automatically aligned through shared relative timebase
+- No manual time alignment or interpolation needed between modalities
 """
 
 import os
@@ -100,7 +106,6 @@ class SpikeTriggeredAnalyzer:
         
         # Analysis window parameters (in seconds)
         self.sta_window = 0.5    # ±0.5s around spike for STA
-        # Note: PPC uses instantaneous phase at spike time (no window needed)
         
         # Define frequency band order (low to high) - separate for motor/visual
         self.motor_band_order = ['delta', 'theta', 'mu', 'beta', 'low_gamma']
@@ -154,14 +159,14 @@ class SpikeTriggeredAnalyzer:
     def reorganize_eeg_data(self, segments_data: Dict) -> Dict:
         """
         Reorganize EEG data from [eeg_file][state] to [state][channel] structure
-        Preserves data_start_time for time alignment
+        All time coordinates are RELATIVE (starting from 0) as provided by neural_data_movement_segmentor
         
         Args:
             segments_data: Original segmented data from neural_data_movement_segmentor
             
         Returns:
             Reorganized EEG data structure with format:
-            {state: {channel: {data, time, fs, data_start_time, ...}}}
+            {state: {channel: {data, time (relative), fs, time_format, absolute_start, absolute_end, ...}}}
         """
         reorganized_eeg = {}
         
@@ -200,12 +205,15 @@ class SpikeTriggeredAnalyzer:
                                 
                             reorganized_eeg[state][channel_name] = {
                                 'data': channel_data,
-                                'time': time,
+                                'time': time,  # RELATIVE time from neural_data_movement_segmentor
                                 'fs': segment.get('fs', self.eeg_fs),
                                 'source_file': eeg_filename,
                                 'duration': segment.get('duration', 0),
                                 'n_samples': len(channel_data),
-                                'data_start_time': segment.get('data_start_time', time[0])
+                                'time_format': segment.get('time_format', 'relative'),  # Should be 'relative'
+                                'absolute_start': segment.get('absolute_start', None),  # Reference only
+                                'absolute_end': segment.get('absolute_end', None),      # Reference only
+                                'data_start_time': segment.get('data_start_time', time[0])  # Kept for compatibility
                             }
                             
                             print(f"    Added channel {channel_name}: {len(channel_data)} samples")
@@ -260,7 +268,10 @@ class SpikeTriggeredAnalyzer:
                                 'fs': segment.get('fs', self.emg_fs),
                                 'duration': segment.get('duration', 0),
                                 'channel': ch_label,
-                                'component': comp_name
+                                'component': comp_name,
+                                'time_format': segment.get('time_format', 'relative'),
+                                'absolute_start': segment.get('absolute_start', None),
+                                'absolute_end': segment.get('absolute_end', None)
                             }
                             
                             print(f"  State {state}, {comp_key}: {segment['n_spikes']} spikes")
@@ -326,18 +337,18 @@ class SpikeTriggeredAnalyzer:
                                        eeg_time: np.ndarray, window_size: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract EEG segments around spike times for spike-triggered analysis
-        Assumes spike_times are already aligned to eeg_time timebase
+        Works with RELATIVE time coordinates (0-based) from neural_data_movement_segmentor
         
         Args:
             eeg_signal: EEG signal array (1D)
-            spike_times: Array of spike times (seconds, aligned to EEG timebase)
-            eeg_time: EEG time vector (seconds)
+            spike_times: Array of spike times in RELATIVE coordinates (seconds, starting from 0)
+            eeg_time: EEG time vector in RELATIVE coordinates (seconds, starting from 0)
             window_size: Window size around spike (±window_size seconds)
             
         Returns:
             Tuple of (segments, relative_time_vector)
             segments: Array of shape (n_valid_spikes, n_samples_per_window)
-            relative_time_vector: Time vector relative to spike (seconds)
+            relative_time_vector: Time vector relative to spike (seconds, ±window_size)
         """
         if len(spike_times) == 0:
             return np.array([]), np.array([])
@@ -463,11 +474,12 @@ class SpikeTriggeredAnalyzer:
         """
         Perform comprehensive spike-triggered analysis for single EEG channel
         Computes STA and PPC for each frequency band
+        Works with RELATIVE time coordinates (0-based) - no alignment needed
     
         Args:
             eeg_data: EEG signal (1D array)
-            eeg_time: EEG time vector (aligned timebase)
-            spike_times: Array of spike times (aligned to EEG timebase)
+            eeg_time: EEG time vector in RELATIVE coordinates (starting from 0)
+            spike_times: Array of spike times in RELATIVE coordinates (starting from 0)
             channel_name: Name of EEG channel
             movement_state: Movement state identifier
         
@@ -607,7 +619,8 @@ class SpikeTriggeredAnalyzer:
     def analyze_dataset_correlations(self, segments_data: Dict) -> Dict[str, Any]:
         """
         Analyze spike-EEG correlations for entire dataset across all movement states
-        Handles time alignment between EEG and spike data
+        Uses relative time coordinates (0-based) from neural_data_movement_segmentor
+        No manual time alignment needed - all modalities share the same relative timebase
         
         Args:
             segments_data: Segmented data dictionary from neural_data_movement_segmentor
@@ -681,31 +694,40 @@ class SpikeTriggeredAnalyzer:
                             
                         analysis_key = f"{mode}_{comp_name}"
                         
-                        spike_times_raw = np.asarray(comp_data['spike_times'], dtype=float)
+                        # Get spike times (already in RELATIVE time coordinates from segmentor)
+                        spike_times = np.asarray(comp_data['spike_times'], dtype=float)
                         
-                        # Align spike times (EMG timebase) -> EEG timebase
-                        emg_start = segments_data.get('emg_start_time', None)
-                        eeg_start = eeg_info.get('data_start_time', None)
+                        # Check time format to ensure consistency
+                        time_format = comp_data.get('time_format', 'unknown')
+                        if time_format != 'relative':
+                            print(f"    ⚠ Warning: {analysis_key} has unexpected time_format='{time_format}', expected 'relative'")
                         
-                        if emg_start is None or eeg_start is None:
-                            print(f"    Warning: missing time alignment info for {analysis_key}")
-                            spike_times_aligned = spike_times_raw
-                        else:
-                            time_offset = float(eeg_start) - float(emg_start)
-                            spike_times_aligned = spike_times_raw + time_offset
-                            print(f"    {analysis_key}: {len(spike_times_raw)} spikes (offset: {time_offset:.3f}s)")
+                        print(f"    {analysis_key}: {len(spike_times)} spikes (relative time)")
+                        
+                        # Verify spike times are in valid range (should start near 0 for relative time)
+                        if len(spike_times) > 0:
+                            spike_min, spike_max = np.min(spike_times), np.max(spike_times)
+                            print(f"      Spike time range: [{spike_min:.3f}s, {spike_max:.3f}s]")
+                            
+                            # Sanity check: spike times should be non-negative and within reasonable duration
+                            if spike_min < -0.01:  # Allow small negative values due to numerical precision
+                                print(f"      ⚠ Warning: Negative spike times detected (min={spike_min:.6f}s)")
                     
                         # Check if any spikes fall within EEG time range
-                        n_in_range = np.sum((spike_times_aligned >= eeg_time[0]) & 
-                                           (spike_times_aligned <= eeg_time[-1]))
+                        # Both should be in relative time [0, duration]
+                        n_in_range = np.sum((spike_times >= eeg_time[0]) & 
+                                           (spike_times <= eeg_time[-1]))
                         
                         if n_in_range == 0:
-                            print(f"      Warning: 0 spikes in EEG range [{eeg_time[0]:.2f}, {eeg_time[-1]:.2f}]s")
+                            print(f"      ⚠ Warning: 0 spikes in EEG range [{eeg_time[0]:.2f}, {eeg_time[-1]:.2f}]s")
+                            print(f"         EEG time format: {eeg_info.get('time_format', 'unknown')}")
+                            print(f"         Spike time format: {time_format}")
                             continue
                         
                         # Perform correlation analysis
+                        # No time alignment needed - both spike_times and eeg_time are in relative coordinates
                         correlation_results = self.analyze_channel_spike_correlation(
-                            eeg_data, eeg_time, spike_times_aligned, channel, state
+                            eeg_data, eeg_time, spike_times, channel, state
                         )
                         
                         if correlation_results is not None:
