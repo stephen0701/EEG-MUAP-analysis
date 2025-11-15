@@ -2,13 +2,23 @@
 """
 This module provides unified segmentation and visualization of EEG, EMG, and spike data
 according to movement states (e.g., sit-to-stand, steady gait) for multi-modal neural datasets.
+
 Key features:
 - Loads movement segmentation results, spike detection results, and EMG/EEG data for each dataset.
 - Segments temporal data (EEG, EMG, CWF components, spikes) by movement state with precise time alignment.
 - Resamples EMG-derived CWF components to EEG sampling rate for cross-modal analysis.
+- **Uses RELATIVE time coordinates (starting from 0) for each movement segment to simplify downstream analysis**
 - Generates spike trains for each movement segment and computes summary statistics.
 - Saves segmented data and summary tables, and provides visualization functions for all modalities.
 - Supports batch processing of multiple datasets and robust error handling.
+- Validates time consistency across all modalities within each segment.
+
+Time Coordinate System (UPDATED):
+- All segmented data uses RELATIVE time coordinates starting from 0
+- Each movement segment has its own independent timebase: [0, duration]
+- Absolute time references (absolute_start, absolute_end) are preserved as metadata
+- This eliminates time alignment issues between different modalities (EEG, CWF, Spikes)
+- All modalities within a segment share the same relative timebase
 """
 
 import numpy as np
@@ -87,7 +97,8 @@ class MovementDataSegmentor:
     def resample_cwf_to_eeg_fs(self, cwf_data: np.ndarray, emg_time: np.ndarray, 
                               target_fs: float) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Resample CWF_comp from EMG fs to EEG fs with time preservation
+        Resample CWF_comp from EMG fs to EEG fs with RELATIVE time starting from 0
+        Returns resampled data with relative time coordinates
         """
         if len(cwf_data) != len(emg_time):
             raise ValueError("CWF data length must match EMG time length")
@@ -97,27 +108,32 @@ class MovementDataSegmentor:
         
         original_fs = 1.0 / np.mean(np.diff(emg_time))
         
+        # Calculate duration from absolute time range
+        duration = emg_time[-1] - emg_time[0]
+        
         if abs(original_fs - target_fs) < 1:
-            return cwf_data, emg_time
+            # No resampling needed, just convert to relative time
+            relative_time = emg_time - emg_time[0]
+            return cwf_data, relative_time
         
-        # Create new time vector at target sampling rate
-        start_time = emg_time[0]
-        end_time = emg_time[-1]
-        duration = end_time - start_time
+        # Create new RELATIVE time vector at target sampling rate (starting from 0)
         n_samples_new = int(duration * target_fs) + 1
-        resampled_time = np.linspace(start_time, end_time, n_samples_new)
+        resampled_time = np.linspace(0, duration, n_samples_new)
         
-        # Interpolate CWF data
+        # Interpolate CWF data using absolute time for accuracy
         if cwf_data.ndim == 1:
             f = interp1d(emg_time, cwf_data, kind='linear', bounds_error=False, fill_value='extrapolate')
-            resampled_cwf = f(resampled_time)
+            # Sample at absolute time points corresponding to relative time
+            abs_sample_points = resampled_time + emg_time[0]
+            resampled_cwf = f(abs_sample_points)
         else:
             resampled_cwf = np.zeros((len(resampled_time), cwf_data.shape[1]))
             for i in range(cwf_data.shape[1]):
                 f = interp1d(emg_time, cwf_data[:, i], kind='linear', bounds_error=False, fill_value='extrapolate')
-                resampled_cwf[:, i] = f(resampled_time)
+                abs_sample_points = resampled_time + emg_time[0]
+                resampled_cwf[:, i] = f(abs_sample_points)
         
-        print(f"  Resampled CWF: {cwf_data.shape} -> {resampled_cwf.shape} (fs: {original_fs:.1f} -> {target_fs:.1f} Hz)")
+        print(f"  Resampled CWF: {cwf_data.shape} -> {resampled_cwf.shape} (fs: {original_fs:.1f} -> {target_fs:.1f} Hz, relative time)")
         return resampled_cwf, resampled_time
     
     def load_npz_data(self, dataset_path: str) -> Dict:
@@ -190,41 +206,48 @@ class MovementDataSegmentor:
     def create_spike_train_for_segment(self, spike_times: np.ndarray, 
                                      segment_start: float, segment_end: float,
                                      target_fs: float) -> Dict:
-        """Create spike train for a specific movement segment"""
+        """Create spike train for a specific movement segment with RELATIVE time coordinates"""
         segment_spikes = spike_times[(spike_times >= segment_start) & (spike_times <= segment_end)]
         
+        duration = segment_end - segment_start
+        n_samples = int(duration * target_fs) + 1
+        relative_time_vector = np.linspace(0, duration, n_samples)
+        
         if len(segment_spikes) == 0:
-            duration = segment_end - segment_start
-            n_samples = int(duration * target_fs) + 1
             return {
                 'spike_times': np.array([]),
                 'spike_indices': np.array([]),
                 'binary_train': np.zeros(n_samples, dtype=int),
-                'time': np.linspace(segment_start, segment_end, n_samples),
+                'time': relative_time_vector,
                 'n_spikes': 0,
-                'fs': target_fs
+                'fs': target_fs,
+                'absolute_start': segment_start,
+                'absolute_end': segment_end,
+                'time_format': 'relative'
             }
         
-        duration = segment_end - segment_start
-        n_samples = int(duration * target_fs) + 1
-        time_vector = np.linspace(segment_start, segment_end, n_samples)
+        # Convert spike times to relative coordinates
+        relative_spike_times = segment_spikes - segment_start
         
         binary_train = np.zeros(n_samples, dtype=int)
         spike_indices = []
         
-        for spike_time in segment_spikes:
-            closest_idx = np.argmin(np.abs(time_vector - spike_time))
+        for rel_spike_time in relative_spike_times:
+            closest_idx = np.argmin(np.abs(relative_time_vector - rel_spike_time))
             if closest_idx < len(binary_train):
                 binary_train[closest_idx] = 1
                 spike_indices.append(closest_idx)
         
         return {
-            'spike_times': segment_spikes,
+            'spike_times': relative_spike_times,
             'spike_indices': np.array(spike_indices),
             'binary_train': binary_train,
-            'time': time_vector,
+            'time': relative_time_vector,
             'n_spikes': len(segment_spikes),
-            'fs': target_fs
+            'fs': target_fs,
+            'absolute_start': segment_start,
+            'absolute_end': segment_end,
+            'time_format': 'relative'
         }
     
     def get_absolute_movement_times(self, movement_results: Dict, data_start_time: float) -> Dict:
@@ -247,10 +270,11 @@ class MovementDataSegmentor:
                              data_type: str, fs: float) -> Dict:
         """
         Unified function to segment temporal data (EEG/EMG) by movement states
+        Returns segments with RELATIVE time coordinates starting from 0
         
         Args:
             data: Data array to segment
-            time_array: Time array corresponding to data
+            time_array: Time array corresponding to data (absolute time)
             movement_results: Movement segmentation results
             data_start_time: Start time of the data recording
             data_type: Type identifier for the data
@@ -272,23 +296,30 @@ class MovementDataSegmentor:
                     start_idx = time_indices[0]
                     end_idx = time_indices[-1]
                     
+                    # Extract data and convert time to RELATIVE coordinates (starting from 0)
+                    segment_time_abs = time_array[time_indices]
+                    segment_time_rel = segment_time_abs - segment_time_abs[0]
+                    
                     segments[state] = {
                         'data': data[time_indices],
-                        'time': time_array[time_indices],
+                        'time': segment_time_rel,  # RELATIVE time starting from 0
                         'start_idx': int(start_idx),
                         'end_idx': int(end_idx),
                         'duration': abs_times['duration'],
                         'data_type': data_type,
                         'n_points': len(time_indices),
                         'movement_time': [movement_results[state]['start_time'], movement_results[state]['end_time']],
-                        'aligned_time': [movement_start, movement_end],
+                        'absolute_start': movement_start,  # Store for reference
+                        'absolute_end': movement_end,      # Store for reference
                         'data_start_time': data_start_time,
-                        'fs': fs
+                        'fs': fs,
+                        'time_format': 'relative'  # Flag to indicate relative time
                     }
                     
                     print(f"  {state}: {data_type} -> indices[{start_idx}:{end_idx}] "
                           f"({len(time_indices)} points), "
-                          f"time[{time_array[time_indices][0]:.2f}:{time_array[time_indices][-1]:.2f}]s")
+                          f"relative_time[0.00:{segment_time_rel[-1]:.2f}]s "
+                          f"(absolute[{segment_time_abs[0]:.2f}:{segment_time_abs[-1]:.2f}]s)")
                 else:
                     print(f"  {state}: {data_type} no data points in time range "
                           f"[{movement_start:.2f}:{movement_end:.2f}]s")
@@ -343,7 +374,10 @@ class MovementDataSegmentor:
                                     'movement_start': movement_start,
                                     'movement_end': movement_end,
                                     'duration': abs_times['duration'],
-                                    'fs': spike_train_data['fs']
+                                    'fs': spike_train_data['fs'],
+                                    'time_format': spike_train_data['time_format'],     
+                                    'absolute_start': spike_train_data['absolute_start'], 
+                                    'absolute_end': spike_train_data['absolute_end']      
                                 }
                                 
                                 print(f"  {state}: {ch_label}-{comp_name} -> {spike_train_data['n_spikes']} spikes "
@@ -363,6 +397,112 @@ class MovementDataSegmentor:
                 spike_segments[mode] = mode_segments
         
         return spike_segments
+    
+    def validate_segment_time_consistency(self, segments_data: Dict) -> Dict[str, Any]:
+        """
+        Validate that all modalities within each segment have consistent relative time coordinates
+        
+        Args:
+            segments_data: Complete segmented data structure
+            
+        Returns:
+            Dictionary with validation results
+        """
+        print(f"\n{'='*80}")
+        print("VALIDATING TIME CONSISTENCY ACROSS MODALITIES")
+        print(f"{'='*80}")
+        
+        validation_results = {
+            'passed': True,
+            'issues': [],
+            'state_checks': {}
+        }
+        
+        available_states = segments_data.get('available_states', [])
+        
+        for state in available_states:
+            state_check = {
+                'time_vectors_match': True,
+                'issues': []
+            }
+            
+            # Collect all time vectors for this state
+            time_vectors = {}
+            
+            # Check EEG time vectors
+            for eeg_name, eeg_segments in segments_data.get('eeg_segments', {}).items():
+                if state in eeg_segments and eeg_segments[state] is not None:
+                    segment = eeg_segments[state]
+                    time_vectors[f'EEG_{eeg_name}'] = segment.get('time')
+            
+            # Check EMG/CWF time vectors
+            for mode, mode_segments in segments_data.get('emg_segments', {}).items():
+                for ch_label, ch_data in mode_segments.items():
+                    if state in ch_data and ch_data[state] is not None:
+                        segment = ch_data[state]
+                        time_vectors[f'EMG_{mode}_{ch_label}'] = segment.get('time')
+            
+            # Check spike time vectors
+            for mode, mode_segments in segments_data.get('spike_segments', {}).items():
+                for ch_label, ch_comps in mode_segments.items():
+                    for comp_name, comp_data in ch_comps.items():
+                        if state in comp_data and comp_data[state] is not None:
+                            segment = comp_data[state]
+                            time_vectors[f'Spike_{mode}_{ch_label}_{comp_name}'] = segment.get('time')
+            
+            # Validate all time vectors start from 0
+            for name, time_vec in time_vectors.items():
+                if time_vec is not None and len(time_vec) > 0:
+                    if not np.isclose(time_vec[0], 0.0, atol=1e-6):
+                        issue = f"{state}/{name}: Time does not start from 0 (starts at {time_vec[0]:.6f}s)"
+                        state_check['issues'].append(issue)
+                        state_check['time_vectors_match'] = False
+            
+            # Compare time vectors between modalities (should be nearly identical for same fs)
+            time_vec_list = list(time_vectors.items())
+            for i in range(len(time_vec_list)):
+                name1, vec1 = time_vec_list[i]
+                if vec1 is None or len(vec1) == 0:
+                    continue
+                    
+                for j in range(i + 1, len(time_vec_list)):
+                    name2, vec2 = time_vec_list[j]
+                    if vec2 is None or len(vec2) == 0:
+                        continue
+                    
+                    # Only compare if same length (different fs will have different lengths)
+                    if len(vec1) == len(vec2):
+                        if not np.allclose(vec1, vec2, rtol=1e-6, atol=1e-9):
+                            issue = f"{state}: Time mismatch between {name1} and {name2}"
+                            state_check['issues'].append(issue)
+                            state_check['time_vectors_match'] = False
+            
+            validation_results['state_checks'][state] = state_check
+            
+            if len(state_check['issues']) > 0:
+                validation_results['passed'] = False
+                validation_results['issues'].extend(state_check['issues'])
+            
+            # Print state validation results
+            if state_check['time_vectors_match']:
+                print(f"  ✓ {state}: All time vectors consistent ({len(time_vectors)} modalities)")
+            else:
+                print(f"  ✗ {state}: Time consistency issues found:")
+                for issue in state_check['issues']:
+                    print(f"      - {issue}")
+        
+        # Print summary
+        print(f"\n{'='*80}")
+        if validation_results['passed']:
+            print("✓ TIME VALIDATION PASSED - All segments have consistent relative time coordinates")
+        else:
+            print(f"✗ TIME VALIDATION FAILED - {len(validation_results['issues'])} issues found")
+            print("\nIssues:")
+            for issue in validation_results['issues']:
+                print(f"  - {issue}")
+        print(f"{'='*80}\n")
+        
+        return validation_results
     
     def segment_dataset(self, dataset_path: str) -> Dict:
         """Segment all data for one dataset with spike support and CWF resampling"""
@@ -462,6 +602,10 @@ class MovementDataSegmentor:
                 spike_data, emg_timestamps, movement_results
             )
             result['spike_segments'] = spike_segments
+        
+        # Validate time consistency across all modalities
+        validation_results = self.validate_segment_time_consistency(result)
+        result['time_validation'] = validation_results
         
         return result
     
@@ -603,14 +747,21 @@ class MovementDataSegmentor:
         self.plot_spike_rate_analysis(segments, output_folder)
     
     def _plot_eeg_segments(self, segments: Dict, colors: Dict, output_folder: str = None):
-        """Plot EEG segments with time alignment"""
+        """Plot EEG segments with time alignment - each state in separate subplot"""
         dataset_name = segments['dataset_name']
         available_states = segments['available_states']
         
+        if not available_states:
+            return
+        
         for eeg_name, eeg_segments in segments['eeg_segments'].items():
-            fig, ax = plt.subplots(1, 1, figsize=(15, 6))
+            n_states = len(available_states)
+            fig, axes = plt.subplots(n_states, 1, figsize=(15, 4 * n_states), squeeze=False)
+            axes = axes.flatten()
             
-            for state in available_states:
+            for idx, state in enumerate(available_states):
+                ax = axes[idx]
+                
                 if state in eeg_segments and eeg_segments[state] is not None:
                     segment = eeg_segments[state]
                     time = segment['time']
@@ -623,13 +774,29 @@ class MovementDataSegmentor:
                         y_data = data
                     
                     ax.plot(time, y_data, color=colors[state], 
-                           label=f'{state}', alpha=0.8, linewidth=1.5)
+                           alpha=0.8, linewidth=1.5)
+                    
+                    # Add statistics to title
+                    duration = segment['duration']
+                    n_samples = len(time)
+                    ax.set_title(f'{state.replace("_", " ").title()} '
+                               f'(Duration: {duration:.2f}s, Samples: {n_samples}, '
+                               f'Time: {time[0]:.2f}-{time[-1]:.2f}s)', 
+                               fontsize=11, fontweight='bold')
+                else:
+                    ax.set_title(f'{state.replace("_", " ").title()} - No Data', 
+                               fontsize=11, color='red')
+                
+                ax.set_ylabel('EEG Amplitude (µV)', fontsize=10)
+                ax.grid(True, alpha=0.3)
+                
+                # Only show x-label for bottom subplot
+                if idx == n_states - 1:
+                    ax.set_xlabel('Relative Time (s)', fontsize=10)
             
-            ax.set_ylabel('EEG Amplitude (µV)')
-            ax.set_xlabel('Time (s)')
-            ax.set_title(f'EEG Segments: {eeg_name} - {dataset_name}')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
+            plt.suptitle(f'EEG Segments: {eeg_name} - {dataset_name}', 
+                        fontsize=14, fontweight='bold', y=0.995)
+            plt.tight_layout(rect=[0, 0, 1, 0.99])
             
             if output_folder:
                 os.makedirs(output_folder, exist_ok=True)
@@ -637,13 +804,16 @@ class MovementDataSegmentor:
                 plt.savefig(save_path, dpi=300, bbox_inches='tight')
                 print(f"EEG plot saved: {save_path}")
                 plt.close()
-            
-            plt.tight_layout()
+            else:
+                plt.show()
     
     def _plot_cwf_components_by_channel(self, segments: Dict, colors: Dict, output_folder: str = None):
-        """Plot CWF components: each channel = one figure, each component = one subplot"""
+        """Plot CWF components: rows=states, cols=components"""
         dataset_name = segments['dataset_name']
         available_states = segments['available_states']
+        
+        if not available_states:
+            return
         
         for mode, mode_segments in segments['emg_segments'].items():
             for ch_label, ch_segments in mode_segments.items():
@@ -668,17 +838,17 @@ class MovementDataSegmentor:
                     print(f"No CWF components found for {ch_label}")
                     continue
                 
-                # Create subplots: one per component
-                fig, axes = plt.subplots(n_components, 1, figsize=(15, 4 * n_components))
-                if n_components == 1:
-                    axes = [axes]
+                # Create subplots: rows=states, cols=components
+                n_states = len(available_states)
+                fig, axes = plt.subplots(n_states, n_components, 
+                                        figsize=(5 * n_components, 3.5 * n_states),
+                                        squeeze=False)
                 
-                # Plot each component in separate subplot
-                for comp_idx in range(n_components):
-                    ax = axes[comp_idx]
-                    has_data = False
-                    
-                    for state in available_states:
+                # Plot each state and component
+                for state_idx, state in enumerate(available_states):
+                    for comp_idx in range(n_components):
+                        ax = axes[state_idx, comp_idx]
+                        
                         if state in cwf_segments and cwf_segments[state] is not None:
                             segment = cwf_segments[state]
                             time = segment['time']
@@ -690,26 +860,44 @@ class MovementDataSegmentor:
                             elif data.ndim == 1 and comp_idx == 0:
                                 y_data = data
                             else:
+                                ax.text(0.5, 0.5, 'No Data', ha='center', va='center',
+                                       transform=ax.transAxes, fontsize=10, color='red')
+                                ax.set_xticks([])
+                                ax.set_yticks([])
                                 continue
                             
                             ax.plot(time, y_data, color=colors[state], 
-                                   label=f'{state}', alpha=0.8, linewidth=1.5)
-                            has_data = True
-                    
-                    if has_data:
-                        ax.set_ylabel('CWF Amplitude (µV)')
-                        ax.set_title(f'Component {comp_idx + 1}')
-                        ax.legend()
+                                   alpha=0.8, linewidth=1.5)
+                            
+                            # Add statistics
+                            mean_val = np.mean(y_data)
+                            std_val = np.std(y_data)
+                            ax.text(0.02, 0.98, f'μ={mean_val:.2f}\nσ={std_val:.2f}', 
+                                   transform=ax.transAxes, fontsize=8,
+                                   verticalalignment='top',
+                                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                        else:
+                            ax.text(0.5, 0.5, 'No Data', ha='center', va='center',
+                                   transform=ax.transAxes, fontsize=10, color='red')
+                            ax.set_xticks([])
+                            ax.set_yticks([])
+                        
+                        # Add titles and labels
+                        if state_idx == 0:
+                            ax.set_title(f'Component {comp_idx + 1}', fontsize=10, fontweight='bold')
+                        
+                        if comp_idx == 0:
+                            ax.set_ylabel(f'{state.replace("_", " ").title()}\nAmplitude (µV)', 
+                                        fontsize=9, fontweight='bold')
+                        
+                        if state_idx == n_states - 1:
+                            ax.set_xlabel('Relative Time (s)', fontsize=9)
+                        
                         ax.grid(True, alpha=0.3)
-                    else:
-                        ax.set_title(f'Component {comp_idx + 1} - No data')
-                
-                # Set x-label for bottom subplot
-                axes[-1].set_xlabel('Time (s)')
                 
                 plt.suptitle(f'{ch_label} - CWF Components ({mode} mode, {self.eeg_fs}Hz) - {dataset_name}', 
-                            fontsize=14, y=0.98)
-                plt.tight_layout()
+                            fontsize=14, fontweight='bold', y=0.995)
+                plt.tight_layout(rect=[0, 0, 1, 0.99])
                 
                 if output_folder:
                     os.makedirs(output_folder, exist_ok=True)
@@ -717,14 +905,17 @@ class MovementDataSegmentor:
                     plt.savefig(save_path, dpi=300, bbox_inches='tight')
                     print(f"CWF components plot saved: {save_path}")
                     plt.close()
+                else:
+                    plt.show()
                 
                 
     def _plot_spike_components_by_channel(self, segments: Dict, colors: Dict, output_folder: str = None):
-        """Plot Spike components: each channel = one figure, each component = one subplot"""
+        """Plot Spike components: rows=states, cols=components with raster plots"""
         dataset_name = segments['dataset_name']
         available_states = segments['available_states']
         spike_segments = segments.get('spike_segments', {})
-        if not spike_segments:
+        
+        if not spike_segments or not available_states:
             print("No spike segments available for plotting")
             return
 
@@ -736,58 +927,77 @@ class MovementDataSegmentor:
                     print(f"No spike components found for {ch_label}")
                     continue
 
-                fig, axes = plt.subplots(n_components, 1, figsize=(15, 4 * n_components))
-                if n_components == 1:
-                    axes = [axes]
+                # Create subplots: rows=states, cols=components
+                n_states = len(available_states)
+                fig, axes = plt.subplots(n_states, n_components, 
+                                        figsize=(5 * n_components, 3 * n_states),
+                                        squeeze=False)
 
-                for comp_idx, comp_name in enumerate(component_names):
-                    ax = axes[comp_idx]
-                    comp_segments = ch_segments[comp_name]
-                    has_data = False
-                    max_spike_rate = 0
+                for state_idx, state in enumerate(available_states):
+                    for comp_idx, comp_name in enumerate(component_names):
+                        ax = axes[state_idx, comp_idx]
+                        comp_segments = ch_segments[comp_name]
 
-                    # Prepare legend labels and handles
-                    legend_labels = []
-                    legend_handles = []
-
-                    for state in available_states:
                         if state in comp_segments and comp_segments[state] is not None:
                             segment = comp_segments[state]
                             spike_times = segment['spike_times']
                             n_spikes = segment['n_spikes']
                             duration = segment['duration']
                             spike_rate = n_spikes / duration if duration > 0 else 0
-                            max_spike_rate = max(max_spike_rate, spike_rate)
 
-                            # Plot spike raster as vertical lines
-                            for spike_time in spike_times:
-                                ax.axvline(spike_time, color=colors[state], alpha=0.7, linewidth=2)
+                            if n_spikes > 0:
+                                # Plot spike raster
+                                ax.eventplot(spike_times, colors=colors[state], 
+                                           lineoffsets=0.5, linelengths=0.8, linewidths=2)
+                                
+                                # Add spike rate info
+                                ax.text(0.98, 0.95, f'n={n_spikes}\n{spike_rate:.1f} Hz', 
+                                       transform=ax.transAxes, fontsize=9,
+                                       verticalalignment='top', horizontalalignment='right',
+                                       bbox=dict(boxstyle='round', facecolor=colors[state], 
+                                               alpha=0.3, edgecolor=colors[state]))
+                                
+                                ax.set_xlim(0, duration)
+                                ax.set_ylim(0, 1)
+                            else:
+                                ax.text(0.5, 0.5, 'No Spikes', ha='center', va='center',
+                                       transform=ax.transAxes, fontsize=10, color='gray')
+                                ax.set_xlim(0, 1)
+                                ax.set_ylim(0, 1)
+                        else:
+                            ax.text(0.5, 0.5, 'No Data', ha='center', va='center',
+                                   transform=ax.transAxes, fontsize=10, color='red')
+                            ax.set_xlim(0, 1)
+                            ax.set_ylim(0, 1)
+                        
+                        # Remove y-axis ticks for raster plots
+                        ax.set_yticks([])
+                        
+                        # Add titles and labels
+                        if state_idx == 0:
+                            ax.set_title(f'{comp_name}', fontsize=10, fontweight='bold')
+                        
+                        if comp_idx == 0:
+                            ax.set_ylabel(f'{state.replace("_", " ").title()}', 
+                                        fontsize=9, fontweight='bold')
+                        
+                        if state_idx == n_states - 1:
+                            ax.set_xlabel('Relative Time (s)', fontsize=9)
+                        
+                        ax.grid(True, alpha=0.3, axis='x')
 
-                            # Add legend entry with spike count and rate
-                            legend_labels.append(f"{state}: {n_spikes} spikes ({spike_rate:.1f} Hz)")
-                            legend_handles.append(plt.Line2D([0], [0], color=colors[state], lw=2))
-                            has_data = True
-
-                    if has_data:
-                        ax.set_ylim(-0.1, 1.1)
-                        ax.set_ylabel('Spike Events')
-                        ax.set_title(f'{comp_name} (Max rate: {max_spike_rate:.1f} Hz)')
-                        ax.grid(True, alpha=0.3)
-                        # Show legend with spike count and rate
-                        ax.legend(legend_handles, legend_labels, loc='upper right')
-                    else:
-                        ax.set_title(f'{comp_name} - No data')
-
-                axes[-1].set_xlabel('Time (s)')
-                plt.suptitle(f'{ch_label} - Spike Components ({mode} mode, {self.emg_fs}Hz) - {dataset_name}',
-                             fontsize=14, y=0.98)
-                plt.tight_layout()
+                plt.suptitle(f'{ch_label} - Spike Raster ({mode} mode, {self.emg_fs}Hz) - {dataset_name}',
+                             fontsize=14, fontweight='bold', y=0.995)
+                plt.tight_layout(rect=[0, 0, 1, 0.99])
+                
                 if output_folder:
                     os.makedirs(output_folder, exist_ok=True)
-                    save_path = os.path.join(output_folder, f'Spike_Components_{ch_label}_{mode}_{dataset_name}.png')
+                    save_path = os.path.join(output_folder, f'Spike_Raster_{ch_label}_{mode}_{dataset_name}.png')
                     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-                    print(f"Spike components plot saved: {save_path}")
+                    print(f"Spike raster plot saved: {save_path}")
                     plt.close()
+                else:
+                    plt.show()
     
     def plot_spike_rate_analysis(self, segments: Dict, output_folder: str = None):
         """Plot spike rate analysis across movement states"""
@@ -937,7 +1147,7 @@ def segment_all_datasets(base_path: str):
 
 
 if __name__ == "__main__":
-    BASE_PATH = '/home/ntk/exo/ExoskeletonPowerAsistance/simulation/mocap_EMG_EEG_data/20241225'
+    BASE_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
     
     print("=== Optimized Movement Data Segmentation ===")
     print("- Unified temporal data segmentation for EEG/EMG")
