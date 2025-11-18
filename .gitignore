@@ -1,0 +1,36 @@
+# === Python 核心忽略清單 ===
+__pycache__/
+*.py[cod]
+*.so
+.ipynb_checkpoints/
+
+# === 虛擬環境 (Virtual Environment) ===
+.env
+.venv
+env/
+venv/
+*.egg-info/
+
+# === VSCode 設定檔 (可選，建議忽略個人設定) ===
+.vscode/
+
+# === 數據檔案 (Data Files) - 避免上傳過大檔案 ===
+# 這些是生醫工程常見的數據格式，GitHub 傳不上去且不該公開
+*.csv
+*.xlsx
+*.xls
+*.mat
+*.h5
+*.pth
+*.pkl
+*.bdf
+*.edf
+*.set
+*.fdt
+*.nii
+*.nii.gz
+
+# === 系統暫存檔 ===
+Thumbs.db
+Desktop.ini
+.DS_Store
