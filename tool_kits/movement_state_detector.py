@@ -302,16 +302,18 @@ class IntegratedMovementStateSegmentor:
                 sub_vcm = vcm_data[X1:X2+1]
                 if len(sub_vcm) > 0:
                     # Dynamic threshold setting
+                    #threshold = np.min(sub_vcm) + 0.7 * (np.max(sub_vcm) - np.min(sub_vcm))
+                    #threshold = np.percentile(sub_vcm, 75)
                     threshold = np.mean(sub_vcm) + 0.3 * np.std(sub_vcm)
                     min_distance = max(1, int(0.3 * self.fs))
                     
                     peaks, _ = find_peaks(sub_vcm, height=threshold, distance=min_distance)
                     
                     if len(peaks) >= 2:
-                        # Calculate global indices of peaks
+                        # Identify first and last peak indices
                         X1_peak = X1 + peaks[0]
                         X2_peak = X1 + peaks[-1]
-                        
+                                         
                         # Mark peak points on plot
                         ax.plot(time_vector[X1_peak], vcm_data[X1_peak], 
                                'go', markersize=8, markerfacecolor='green', label='Peak Points')
@@ -467,10 +469,11 @@ class IntegratedMovementStateSegmentor:
                         items = []
                         for k in npz.files:
                             items.append(npz[k])
-                        if len(items) >= 2 and isinstance(items[1], np.ndarray) and items[1].size > 0:
-                            arr = items[1].astype(float).copy().reshape(-1)
+                        # Fix: should modify items[0] (sync_timeline), not items[1] (marker)
+                        if len(items) >= 2 and isinstance(items[0], np.ndarray) and items[0].size > 0:
+                            arr = items[0].astype(float).copy().reshape(-1)
                             new_val = arr[-1] + 0.0333
-                            items[1] = np.concatenate([arr, np.array([new_val])])
+                            items[0] = np.concatenate([arr, np.array([new_val])])
                         sync_dict[name] = items
                 except Exception as e:
                     warnings.warn(f"Failed to load {npz_path}: {e}")
@@ -478,11 +481,8 @@ class IntegratedMovementStateSegmentor:
             else:
                 sync_dict[name] = None
         return sync_dict
-    
+    '''
     def count_videotime_from_sync(self, sync_entry) -> Optional[np.ndarray]:
-        """
-        Calculate video time from sync data - matching MATLAB implementation
-        """
         if sync_entry is None or len(sync_entry) < 2:
             return None
         try:
@@ -490,6 +490,24 @@ class IntegratedMovementStateSegmentor:
             start_time_arr = np.array(sync_entry[0]).astype(float).reshape(-1)
             start_time = start_time_arr[0]
             timeOfvideo = (frame_time_data - start_time).T  # Row vector like MATLAB
+            return timeOfvideo
+        except Exception:
+            return None
+    '''
+        
+    def count_videotime_from_sync(self, sync_entry) -> Optional[np.ndarray]:
+        """
+        Calculate video time from sync data
+        sync_entry[0] = sync_timeline (frame timestamps array)
+        sync_entry[1] = marker (start/end markers only)
+        """
+        if sync_entry is None or len(sync_entry) < 1:
+            return None
+        try:
+            # Use sync_timeline directly (sync_entry[0])
+            # Note: load_sync_time_markers already adds one extra frame (last + 0.0333s)
+            frame_time_data = np.array(sync_entry[0]).astype(float).reshape(-1)
+            timeOfvideo = frame_time_data.T  # Use directly as time vector
             return timeOfvideo
         except Exception:
             return None
@@ -689,7 +707,7 @@ def main():
     Main execution function - example usage
     """
     # Set paths - please modify according to your actual situation
-    base_path = '/home/ntk/exo/ExoskeletonPowerAsistance/simulation/mocap_EMG_EEG_data/20241225'  # Data root directory
+    base_path = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'  # Data root directory
     
     # Create integrated segmentor
     segmentor = IntegratedMovementStateSegmentor(fs=30)
