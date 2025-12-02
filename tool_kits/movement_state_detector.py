@@ -538,6 +538,7 @@ class IntegratedMovementStateSegmentor:
         # Use sync time data if available
         if sync_time_data is not None and len(sync_time_data) == len(vcm_data):
             time_vector = sync_time_data
+            print(f"Using sync time data for {data_label}")
         
         # Create individual output folder for this dataset (no subfolders)
         individual_output_folder = os.path.join(base_output_folder, folder_name, 'movement_analysis')
