@@ -48,14 +48,18 @@ from scipy.interpolate import interp1d
 
 
 class SpikeTriggeredAnalyzer:
-    """Spike-triggered analysis for EEG-EMG correlation: STA and PPC measures"""
+    """Spike-triggered analysis for EEG-EMG correlation: STA and PPC measures
+    
+    Works with RELATIVE time coordinates (0-based) from neural_data_movement_segmentor.
+    All time arrays within each movement segment start from 0 and share the same timebase.
+    """
     
     def __init__(self, eeg_fs: float = 500.0, emg_fs: float = 1000.0):
         self.eeg_fs = eeg_fs
         self.emg_fs = emg_fs
         
         self.motor_freq_bands = {
-            'delta': (1, 4), 'theta': (4, 8), 'mu': (8, 12),
+            'delta': (1, 4), 'theta': (4, 8), 'alpha': (8, 12),
             'beta': (12, 30), 'low_gamma': (30, 46)
         }
         
@@ -72,12 +76,12 @@ class SpikeTriggeredAnalyzer:
         self.movement_states = ['sit_to_stand', 'stand_to_walk', 'steady_gait', 'walk_to_stop']
         
         self.sta_windows = {
-            'delta': 0.5, 'theta': 0.5, 'mu': 0.3,
-            'alpha': 0.3, 'beta': 0.15, 'low_gamma': 0.075
+            'delta': 0.5, 'theta': 0.5, 'alpha': 0.3,
+            'beta': 0.15, 'low_gamma': 0.075
         }
         self.display_window = 0.3
         
-        self.motor_band_order = ['delta', 'theta', 'mu', 'beta', 'low_gamma']
+        self.motor_band_order = ['delta', 'theta', 'alpha', 'beta', 'low_gamma']
         self.visual_band_order = ['delta', 'theta', 'alpha', 'beta', 'low_gamma']
     
     def _get_freq_bands_for_channel(self, channel_name: str) -> Dict[str, Tuple[float, float]]:
@@ -85,6 +89,43 @@ class SpikeTriggeredAnalyzer:
     
     def _get_band_order_for_channel(self, channel_name: str) -> List[str]:
         return self.visual_band_order if channel_name in self.visual_channels else self.motor_band_order
+    
+    def _verify_relative_time_coordinates(self, time_array: np.ndarray, spike_times: np.ndarray, 
+                                         context: str = "") -> bool:
+        """Verify that time coordinates are relative (start from ~0)
+        
+        Args:
+            time_array: Time vector to check
+            spike_times: Spike times array to check
+            context: Context string for logging
+            
+        Returns:
+            True if coordinates appear to be relative, False otherwise
+        """
+        if len(time_array) == 0:
+            return True
+        
+        time_start = time_array[0]
+        time_end = time_array[-1]
+        
+        # Check if time starts near 0 (within 0.01s tolerance)
+        if abs(time_start) > 0.01:
+            print(f"  Warning [{context}]: Time does not start from 0 (starts at {time_start:.3f}s)")
+            print(f"    This may indicate absolute time coordinates instead of relative coordinates.")
+            return False
+        
+        # Check if spike times are within time range
+        if len(spike_times) > 0:
+            spikes_in_range = np.sum((spike_times >= time_start) & (spike_times <= time_end))
+            spikes_ratio = spikes_in_range / len(spike_times)
+            
+            if spikes_ratio < 0.5:
+                print(f"  Warning [{context}]: Only {spikes_ratio*100:.1f}% of spikes are within time range")
+                print(f"    Time range: [{time_start:.3f}, {time_end:.3f}]s")
+                print(f"    Spike range: [{spike_times.min():.3f}, {spike_times.max():.3f}]s")
+                return False
+        
+        return True
         
     def reorganize_eeg_data(self, segments_data: Dict) -> Dict:
         """Reorganize EEG from [eeg_file][state] to [state][channel] structure"""
@@ -188,7 +229,23 @@ class SpikeTriggeredAnalyzer:
     def extract_spike_triggered_segments(self, eeg_signal: np.ndarray, spike_times: np.ndarray,
                                        eeg_time: np.ndarray, window_size: float, 
                                        display_window: float = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Extract EEG segments around spike times (relative coordinates)"""
+        """Extract EEG segments around spike times (relative coordinates)
+        
+        With relative time coordinates (0-based), time alignment is automatic:
+        - spike_times and eeg_time share the same timebase (both start from 0)
+        - No coordinate transformation needed
+        - Simple array indexing using np.argmin()
+        
+        Args:
+            eeg_signal: EEG signal array (1D)
+            spike_times: Spike occurrence times (relative coordinates, 0-based)
+            eeg_time: EEG time vector (relative coordinates, 0-based)
+            window_size: Extraction window size in seconds (frequency-specific)
+            display_window: Display window size in seconds (uniform across bands)
+            
+        Returns:
+            (segments, relative_time, display_time)
+        """
         if len(spike_times) == 0:
             return np.array([]), np.array([]), np.array([])
         
@@ -226,7 +283,7 @@ class SpikeTriggeredAnalyzer:
     def compute_pairwise_phase_consistency(self, instantaneous_phase: np.ndarray, 
                                            spike_times: np.ndarray,
                                            eeg_time: np.ndarray) -> Dict[str, float]:
-        """Compute PPC by sampling instantaneous phase at spike times (no window needed)
+        """Compute PPC and phase shift by sampling instantaneous phase at spike times
         
         Args:
             instantaneous_phase: Full EEG instantaneous phase array
@@ -234,10 +291,19 @@ class SpikeTriggeredAnalyzer:
             eeg_time: EEG time axis
             
         Returns:
-            Dictionary with PPC value and statistics
+            Dictionary with PPC value, phase shift (mean phase angle), and statistics
+            - ppc: Pairwise phase consistency (0-1, measures phase synchronization)
+            - phase_shift: Mean phase angle in radians (-π to π, preferred phase relationship)
+            - phase_shift_deg: Mean phase angle in degrees (-180 to 180)
+            - phase_std: Circular standard deviation of phase (radians)
+            - phase_std_deg: Circular standard deviation of phase (degrees)
         """
         if len(spike_times) == 0:
-            return {'ppc': 0.0, 'n_pairs': 0, 'n_spikes': 0}
+            return {
+                'ppc': 0.0, 'n_pairs': 0, 'n_spikes': 0,
+                'phase_shift': 0.0, 'phase_shift_deg': 0.0,
+                'phase_std': 0.0, 'phase_std_deg': 0.0
+            }
         
         # Sample phase at each spike time
         spike_phase_values = []
@@ -250,13 +316,33 @@ class SpikeTriggeredAnalyzer:
         N = len(spike_phase_values)
         
         if N < 2:
-            return {'ppc': 0.0, 'n_pairs': 0, 'n_spikes': N}
+            # Calculate phase shift even with single spike
+            mean_phase = circmean(spike_phase_values, high=np.pi, low=-np.pi) if N == 1 else 0.0
+            return {
+                'ppc': 0.0, 'n_pairs': 0, 'n_spikes': N,
+                'phase_shift': float(mean_phase),
+                'phase_shift_deg': float(np.rad2deg(mean_phase)),
+                'phase_std': 0.0,
+                'phase_std_deg': 0.0
+            }
         
         # PPC formula (Vinck et al., 2010)
         z = np.sum(np.exp(1j * spike_phase_values))
         ppc = (np.abs(z)**2 - N) / (N * (N - 1))
         
-        return {'ppc': float(np.clip(ppc, 0, 1)), 'n_pairs': N * (N - 1) // 2, 'n_spikes': N}
+        # Phase shift: mean phase angle (circular mean)
+        mean_phase = circmean(spike_phase_values, high=np.pi, low=-np.pi)
+        phase_std = circstd(spike_phase_values, high=np.pi, low=-np.pi)
+        
+        return {
+            'ppc': float(np.clip(ppc, 0, 1)),
+            'n_pairs': N * (N - 1) // 2,
+            'n_spikes': N,
+            'phase_shift': float(mean_phase),
+            'phase_shift_deg': float(np.rad2deg(mean_phase)),
+            'phase_std': float(phase_std),
+            'phase_std_deg': float(np.rad2deg(phase_std))
+        }
     
     def analyze_channel_spike_correlation(self, eeg_data: np.ndarray, eeg_time: np.ndarray,
                                     spike_times: np.ndarray, channel_name: str,
@@ -266,9 +352,19 @@ class SpikeTriggeredAnalyzer:
         STA and PPC are computed independently:
         - STA: Requires window extraction, may fail for boundary spikes
         - PPC: Direct phase sampling at spike times, always computed if spikes exist
+        
+        Time Coordinate System:
+        - All time arrays (eeg_time, spike_times) use RELATIVE coordinates starting from 0
+        - This is enforced by neural_data_movement_segmentor.py
+        - Verification check ensures coordinate consistency
         """
         freq_bands = self._get_freq_bands_for_channel(channel_name)
         channel_type = 'Visual' if channel_name in self.visual_channels else 'Motor'
+        
+        # Verify relative time coordinates
+        context = f"{channel_name}_{movement_state}"
+        if not self._verify_relative_time_coordinates(eeg_time, spike_times, context):
+            print(f"  Proceeding with analysis despite coordinate warnings...")
         
         results = {
             'channel': channel_name,
@@ -455,8 +551,8 @@ class SpikeTriggeredAnalyzer:
         sns.set_style('whitegrid')
         movement_states = analysis_results.get('movement_states', {})
         band_colors = {
-            'delta': '#1f77b4', 'theta': '#ff7f0e', 'mu': '#2ca02c',
-            'alpha': '#2ca02c', 'beta': '#d62728', 'low_gamma': '#9467bd'
+            'delta': '#1f77b4', 'theta': '#ff7f0e', 'alpha': '#2ca02c',
+            'beta': '#d62728', 'low_gamma': '#9467bd'
         }
 
         for state_name, state_data in movement_states.items():
@@ -597,6 +693,8 @@ class SpikeTriggeredAnalyzer:
 
                     ppc_df = pd.DataFrame(index=bands, columns=component_names, dtype=float)
                     nsp_df = pd.DataFrame(index=bands, columns=component_names, dtype=int)
+                    phase_df = pd.DataFrame(index=bands, columns=component_names, dtype=float)
+                    phase_std_df = pd.DataFrame(index=bands, columns=component_names, dtype=float)
                     freq_ranges = {}
 
                     for comp_label, analysis_data in components.items():
@@ -605,13 +703,19 @@ class SpikeTriggeredAnalyzer:
                             if band_name in band_dict:
                                 ppc_val = band_dict[band_name].get('ppc', {}).get('ppc', np.nan)
                                 n_spikes = int(band_dict[band_name].get('ppc', {}).get('n_spikes', 0))
+                                phase_shift_deg = band_dict[band_name].get('ppc', {}).get('phase_shift_deg', np.nan)
+                                phase_std_deg = band_dict[band_name].get('ppc', {}).get('phase_std_deg', np.nan)
                                 freq_range = band_dict[band_name].get('freq_range', (0, 0))
                                 ppc_df.at[band_name, comp_label] = ppc_val
                                 nsp_df.at[band_name, comp_label] = n_spikes
+                                phase_df.at[band_name, comp_label] = phase_shift_deg
+                                phase_std_df.at[band_name, comp_label] = phase_std_deg
                                 freq_ranges[band_name] = freq_range
                             else:
                                 ppc_df.at[band_name, comp_label] = np.nan
                                 nsp_df.at[band_name, comp_label] = 0
+                                phase_df.at[band_name, comp_label] = np.nan
+                                phase_std_df.at[band_name, comp_label] = np.nan
 
                     if ppc_df.isna().all().all():
                         continue
@@ -622,27 +726,40 @@ class SpikeTriggeredAnalyzer:
                     col_order = sorted(component_names, key=sort_key)
                     ppc_df = ppc_df[col_order]
                     nsp_df = nsp_df[col_order]
+                    phase_df = phase_df[col_order]
+                    phase_std_df = phase_std_df[col_order]
 
+                    # Create annotations with PPC, phase shift ± std, and spike count
                     annot = ppc_df.copy().astype(object)
                     for r in ppc_df.index:
                         for c in ppc_df.columns:
                             val = ppc_df.at[r, c]
                             nsp = int(nsp_df.at[r, c])
-                            annot.at[r, c] = "" if np.isnan(val) else f"{val:.3f}\n(n={nsp})"
+                            phase = phase_df.at[r, c]
+                            phase_std = phase_std_df.at[r, c]
+                            if np.isnan(val):
+                                annot.at[r, c] = ""
+                            else:
+                                # Format: PPC value, phase shift ± std in degrees, spike count
+                                annot.at[r, c] = f"{val:.3f}\nφ={phase:.0f}°±{phase_std:.0f}°\n(n={nsp})"
 
-                    figsize = (max(12, len(component_names) * 0.8), max(5, len(bands) * 1.0))
+                    # Adjust figure size for optimal readability: larger cells to prevent text overlap
+                    figsize = (max(16, len(component_names) * 1.5), max(10, len(bands) * 2.2))
                     fig, ax = plt.subplots(figsize=figsize)
                     sns.heatmap(ppc_df.astype(float), annot=annot, fmt='', 
                                cmap='viridis', vmin=0.0, vmax=1.0, 
-                               linewidths=0.5, linecolor='white',
-                               cbar_kws={'label': 'PPC (0-1)'}, ax=ax)
+                               linewidths=0.8, linecolor='white',
+                               cbar_kws={'label': 'PPC (0-1)', 'shrink': 0.8}, ax=ax,
+                               annot_kws={'fontsize': 13, 'va': 'center', 'ha': 'center', 
+                                         'linespacing': 1.3, 'color': 'white'})
 
                     state_title = state_name.replace("_", " ").title()
                     mode_title = mode.title()
                     ax.set_title(
-                        f'PPC Heatmap — All EMG Channels & Frequency Bands\n'
+                        f'PPC & Phase Shift Heatmap — All EMG Channels & Frequency Bands\n'
                         f'{state_title} | {mode_title} Mode | '
-                        f'EEG: {eeg_channel_name} ({channel_type})',
+                        f'EEG: {eeg_channel_name} ({channel_type})\n'
+                        f'(PPC value, φ=phase shift±std in degrees, n=spike count)',
                         fontsize=12, fontweight='bold'
                     )
                     ax.set_xlabel('EMG Channel - Spike Component', fontsize=11)
@@ -806,4 +923,5 @@ if __name__ == "__main__":
             print("No segmented data found for path2_02")
     
     # all_results = analyze_all_datasets_correlations(BASE_PATH, dataset_prefix='path2_')
+
 # %%
