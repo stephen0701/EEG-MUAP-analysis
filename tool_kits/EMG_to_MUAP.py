@@ -1,3 +1,4 @@
+# %%
 """
 Multi-kernel EMG deconvolution (IRLS + LSMR, convolution operators)
 
@@ -20,94 +21,6 @@ from datetime import datetime
 from scipy.signal import welch, convolve
 from scipy.sparse.linalg import lsmr, LinearOperator
 
-# ------------ helper IO utilities ---------------
-def _safe_to_array(val):
-    """Try to convert to numpy array suitable for np.savez (reject object-dtype)."""
-    try:
-        arr = np.asarray(val)
-        if arr.dtype == object:
-            return False, None
-        return True, arr
-    except Exception:
-        return False, None
-
-def _clean_label(s):
-    """Make a safe label for npz keys (no spaces, limited chars)."""
-    if not isinstance(s, str):
-        s = str(s)
-    # simple cleanup: replace spaces and slashes
-    return s.replace(' ', '_').replace('/', '_')
-
-def save_results_list_to_npz(results, npz_path, meta=None, channel_names=None, compress=True):
-    """
-    Save `results` (list of per-channel dicts) into a compressed .npz file.
-    channel_names: optional list of strings to map results[0] -> channel_names[0], etc.
-    If a name is not provided for an index, falls back to 'ch{i}'.
-    """
-    npz_dict = {}
-
-    for i, ent in enumerate(results):
-        label = (channel_names[i] if (channel_names is not None and i < len(channel_names)) else f'ch{i}')
-        label = _clean_label(label)
-        prefix = f'{label}_'
-        for key, val in ent.items():
-            ok, arr = _safe_to_array(val)
-            if ok:
-                npz_dict[prefix + key] = arr
-                continue
-
-            # special-case recon_components: list of arrays possibly stackable
-            if key == 'recon_components' and isinstance(val, (list, tuple)):
-                try:
-                    stacked = np.stack([np.asarray(v) for v in val], axis=0)
-                    if stacked.dtype != object:
-                        npz_dict[prefix + 'recon_components'] = stacked
-                        continue
-                except Exception:
-                    pass
-                for k_comp, comp in enumerate(val):
-                    okc, arrc = _safe_to_array(comp)
-                    if okc:
-                        npz_dict[f'{prefix}recon_k{k_comp}'] = arrc
-                    else:
-                        npz_dict[f'{prefix}recon_k{k_comp}_txt'] = np.array([repr(comp)], dtype='U')
-                continue
-
-            # conv_history often list-of-floats -> try to save as float array
-            if key == 'conv_history' and isinstance(val, (list, tuple)):
-                try:
-                    arr_ch = np.asarray(val, dtype=float)
-                    npz_dict[prefix + key] = arr_ch
-                    continue
-                except Exception:
-                    pass
-
-            # last resort: JSON-serialize
-            try:
-                s = json.dumps(val, default=lambda o: str(o))
-                npz_dict[prefix + key + '_json'] = np.array([s], dtype='U')
-            except Exception:
-                npz_dict[prefix + key + '_txt'] = np.array([repr(val)], dtype='U')
-
-    # add channel count and meta
-    npz_dict['__n_channels__'] = np.array([len(results)], dtype=np.int32)
-    if meta is not None:
-        try:
-            npz_dict['__global_meta_json__'] = np.array([json.dumps(meta, default=str)], dtype='U')
-        except Exception:
-            npz_dict['__global_meta_txt__'] = np.array([repr(meta)], dtype='U')
-
-    # ensure dir exists
-    folder = os.path.dirname(npz_path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
-
-    if compress:
-        np.savez_compressed(npz_path, **npz_dict)
-    else:
-        np.savez(npz_path, **npz_dict)
-
-# ------------ end IO utilities ---------------
 def estimate_sigmas_from_gamma(signal, fs, mode):
     """
     Estimate Gaussian kernel sigmas from EMG PSD.
@@ -154,7 +67,7 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
         sigma2 = -slope / (4 * np.pi**2)
         sigma = np.sqrt(max(sigma2, eps))
         print("DEBUG sigmas:", sigma)
-        return np.array([sigma, sigma])
+        return np.array([sigma, sigma]), {'f_sel': f_sel, 'pxx_sel': pxx_sel, 'f0_list': [], 'pctls': []}
     else:
         p = np.polyfit(f2, gamma, 2)  # a f^4 + b f^2 + c
         a, b = p[0], p[1]
@@ -213,23 +126,7 @@ def estimate_sigmas_from_gamma(signal, fs, mode):
         print(f"[DEBUG] fallback_list={fallback_list}")
         print(f"[DEBUG] sigmas:", sigmas)
 
-        # plot PSD and percentiles for visual debug
-        try:
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(8,4))
-            plt.plot(f_sel, pxx_sel, label='PSD selected')
-            for i, pc in enumerate(pctls):
-                plt.axvline(f0_list[i], color='r', linestyle='--', label=f'Percentile {pc:.2f}')
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('PSD')
-            plt.title('PSD and Percentile Frequencies')
-            plt.legend()
-            plt.tight_layout()
-            plt.show()
-        except Exception as e:
-            print("[DEBUG] plot failed:", e)
-
-        return np.array(sigmas)
+        return np.array(sigmas), {'f_sel': f_sel, 'pxx_sel': pxx_sel, 'f0_list': f0_list, 'pctls': pctls}
 
 def build_kernels(sigmas, fs, mode):
     """
@@ -316,91 +213,42 @@ def adjoint_test(apply_A, apply_AT, n, N, n_trials=5, tol=1e-8, rng_seed=1234, v
 
     return results
 
-def resample_to_frames(X_mat, fs, frame_rate=30.0, method='mean'):
+def ensure_dir(path):
+    """Create directory if it does not exist."""
+    os.makedirs(path, exist_ok=True)
+    return path
+
+class AlternativeProcessor:
     """
-    Resample per-sample coefficient matrix X_mat into per-frame values.
-
-    Parameters
-    ----------
-    X_mat : array_like, shape (N, nK) or (N,)
-        Deconvolution coefficients per original sample.
-    fs : float
-        Original sampling frequency (samples per second).
-    frame_rate : float, optional
-        Target frame rate (frames per second). Default is 30.0 (1 frame = 1/30 s).
-    method : {'mean', 'sum', 'nearest'}, optional
-        Aggregation method used to compute one value per frame:
-        - 'mean'    : average of samples inside the frame window (default)
-        - 'sum'     : sum of samples inside the frame window
-        - 'nearest' : take the sample nearest to the frame center
-
-    Returns
-    -------
-    X_frame : ndarray, shape (n_frames, nK)
-        Aggregated coefficients per frame.
-    frame_centers : ndarray, shape (n_frames,)
-        Time (seconds) of each frame center.
-    frame_count : int
-        Number of frames (n_frames).
+    Simple preprocessing pipeline:
+    1. Detrend (remove linear trend)
+    2. Apply notch filter (remove powerline noise)
+    3. Apply highpass filter (remove low-frequency drift)
+    4. Apply lowpass filter (remove high-frequency noise)
     """
-    # Ensure numpy array and 2D shape (N, nK)
-    X_mat = np.asarray(X_mat)
-    if X_mat.ndim == 1:
-        X_mat = X_mat.reshape(-1, 1)
-    N, nK = X_mat.shape
+    def __init__(self, fs=1000, notch_f0=60, hp_fc=40, lp_fc=450):
+        from scipy.signal import iirnotch, butter
+        self.fs = fs
+        # Design notch filter
+        self.b_notch, self.a_notch = iirnotch(notch_f0, 30, fs)
+        # Design highpass filter
+        nyq = 0.5 * fs
+        hp_wn = hp_fc / nyq
+        self.b_hp, self.a_hp = butter(4, hp_wn, btype='highpass', output='ba')
+        # Design lowpass filter
+        lp_wn = lp_fc / nyq
+        self.b_lp, self.a_lp = butter(4, lp_wn, btype='lowpass', output='ba')
 
-    # Compute total frames
-    total_seconds = N / float(fs)
-    n_frames = int(np.ceil(total_seconds * frame_rate))
+    def process(self, x):
+        """Apply detrend, notch, highpass, lowpass filters."""
+        from scipy.signal import detrend, filtfilt
+        y = detrend(x)
+        y = filtfilt(self.b_notch, self.a_notch, y)
+        y = filtfilt(self.b_hp, self.a_hp, y)
+        y = filtfilt(self.b_lp, self.a_lp, y)
+        return y
 
-    # sample times in seconds
-    sample_times = np.arange(N) / float(fs)
-
-    # frame edges (seconds): length n_frames+1
-    frame_edges = np.arange(0, n_frames + 1) / frame_rate
-
-    # preallocate output
-    X_frame = np.zeros((n_frames, nK), dtype=float)
-
-    if method in ('mean', 'sum'):
-        # Use searchsorted to find indices of samples within each frame window
-        starts = np.searchsorted(sample_times, frame_edges[:-1], side='left')
-        ends   = np.searchsorted(sample_times, frame_edges[1:], side='left')
-
-        for j in range(n_frames):
-            s_idx = starts[j]
-            e_idx = ends[j]
-            if e_idx > s_idx:
-                block = X_mat[s_idx:e_idx, :]
-                if method == 'mean':
-                    X_frame[j, :] = block.mean(axis=0)
-                else:  # method == 'sum'
-                    X_frame[j, :] = block.sum(axis=0)
-            else:
-                # no samples in this frame => leave zeros
-                X_frame[j, :] = 0.0
-
-    elif method == 'nearest':
-        # For nearest, pick sample index closest to frame center
-        # compute frame centers (seconds) and corresponding nearest sample indices
-        frame_centers = (frame_edges[:-1] + frame_edges[1:]) / 2.0
-        nearest_sample_idx = np.round(frame_centers * fs).astype(int)
-        # clip to valid sample range
-        nearest_sample_idx = np.clip(nearest_sample_idx, 0, N - 1)
-        X_frame = X_mat[nearest_sample_idx, :]
-
-        # return early with computed centers
-        return X_frame, frame_centers, n_frames
-
-    else:
-        raise ValueError("method must be one of {'mean','sum','nearest'}")
-
-    # compute frame centers for return
-    frame_centers = (frame_edges[:-1] + frame_edges[1:]) / 2.0
-
-    return X_frame, frame_centers, n_frames
-
-def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-6):
+def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-6, ch_labels=None):
     """
     Multi-kernel deconvolution entry point.
 
@@ -412,12 +260,14 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
         Sampling rate in Hz
     force_mode : str or list
         'single' or 'multi' per channel (or a list matching channel count)
-    desktop_dir : str, optional
+    save_dir : str, optional
         Directory to save diagnostic figures
     max_iter : int
         Maximum IRLS iterations
     tol : float
         Convergence tolerance for IRLS (relative change)
+    ch_labels : list of str, optional
+        Channel labels for plotting
     """
     # normalize emg shape to (N, C)
     emg = np.asarray(emg)
@@ -432,7 +282,7 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
         assert len(force_mode) == C, "force_mode list must match channel count"
         force_mode_list = list(force_mode)
 
-    ch_list = ['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF']
+    ch_list = ch_labels if ch_labels else ['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF']
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
@@ -440,9 +290,10 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
     for ch in range(C):
         s = emg[:, ch].astype(float)
         mode = force_mode_list[ch]
+        ch_label = ch_list[ch] if ch < len(ch_list) else f'Ch{ch+1}'
 
         # 1) estimate sigmas and build kernels
-        sigmas = estimate_sigmas_from_gamma(s, fs, mode)
+        sigmas, psd_info = estimate_sigmas_from_gamma(s, fs, mode)
         K = build_kernels(sigmas, fs, mode)   # shape (Klen, nK)
         nK = K.shape[1]
         K_rev = K[::-1, :]
@@ -567,15 +418,6 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
             os.makedirs(plots_dir, exist_ok=True)
 
             dpi_save = 150
-            ch_label = ch_list[ch] if ch < len(ch_list) else f'Ch{ch+1}'
-
-            # ensure X_frame exists for plotting (safe fallback)
-            try:
-                X_frame, frame_centers, n_frames = resample_to_frames(X_mat, fs, frame_rate=30.0, method='sum')
-            except Exception:
-                X_frame = np.zeros((0, nK))
-                frame_centers = np.array([])
-                n_frames = 0
 
             # a) kernels and firing patterns -> save to plots_dir
             fig, axes = plt.subplots(nK, 2, figsize=(10, 4*nK))
@@ -694,6 +536,15 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
             P2_db = 10.0 * np.log10(P2 + eps_db)
             plt.plot(f1, P1_db, label='Original')
             plt.plot(f2p, P2_db, label='Reconstruct')
+            
+            # Plot percentile lines and annotate frequency values (only for 'single' mode)
+            if mode == 'single' and psd_info and psd_info.get('f0_list'):
+                f0_list = psd_info['f0_list']
+                pctls = psd_info['pctls']
+                for i, (pc, f0) in enumerate(zip(pctls, f0_list)):
+                    plt.axvline(f0, color='red', linestyle='--', linewidth=1.5, alpha=0.7, 
+                               label=f'Percentile {pc:.2f}: {f0:.1f} Hz')
+            
             plt.xlim([0, fs/2])
             plt.xlabel('Frequency (Hz)')
             plt.ylabel('PSD (dB re µV^2/Hz)')
@@ -704,30 +555,12 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
             fig.savefig(os.path.join(plots_dir, f'{ch_label}_PSD_dB.png'), dpi=dpi_save)
             plt.close(fig)
 
-            # g) firing patterns, if frames available -> plots_dir
-            if X_frame.size != 0:
-                n_plots = X_frame.shape[1]
-                fig, axes = plt.subplots(n_plots, 1, figsize=(10, 3 * n_plots))
-                axes = np.atleast_1d(axes)
-                frame_x = np.arange(n_frames)
-                for kk in range(n_plots):
-                    axes[kk].plot(frame_x, X_frame[:, kk], linewidth=1.2)
-                    axes[kk].set_xlabel('Bin (1 Bin = 1/30 s)')
-                    axes[kk].set_ylabel('Coefficient (per Bin)')
-                    axes[kk].set_title(f'{ch_label} — Firing Pattern (comp {kk+1})')
-                    axes[kk].grid(True)
-                plt.tight_layout(rect=[0, 0.03, 1, 0.97])
-                fig.suptitle(f'{ch_label}: Firing Patterns (Bin units)', fontsize=14, y=0.995)
-                fig.savefig(os.path.join(plots_dir, f'{ch_label}_FiringPatterns_frames.png'), dpi=dpi_save)
-                plt.close(fig)
-
         # Append results for this channel
         results.append({
             'sigmas': sigmas,
             'mode': mode,
             'K': K,
             'X': X_mat,
-            'X_frame': X_frame,
             'recon_total': recon_from_applyA,
             'recon_components': recon_comp,
             'CWF': CWF,
@@ -738,23 +571,245 @@ def multi_kernel_deconv(emg, fs, force_mode, save_dir=None, max_iter=10, tol=1e-
             'residual': residual
         })
 
-    # ------------- save once after all channels processed ---------------
-    if save_dir is not None:
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        channel_names_to_use = ch_list[:C] if len(ch_list) >= C else [f'ch{i}' for i in range(C)]
-        meta = {
-            'fs': fs,
-            'n_samples': N,
-            'n_channels_input': C,
-            'channels_expected': ch_list,
-            'timestamp': datetime.now().isoformat()
-        }
-        # include mode in filename for clarity if available
-        npz_name = os.path.join(save_dir, f'multi_kernel_deconv_results_{mode}_{ts}.npz')
-        try:
-            save_results_list_to_npz(results, npz_name, meta=meta, channel_names=channel_names_to_use, compress=True)
-            print(f"Saved multi-kernel results to {npz_name}")
-        except Exception as e_npz:
-            print("Failed to save results npz:", e_npz)
-
     return results
+
+# ============================================================================
+# High-level processing functions
+# ============================================================================
+
+def process_single_dataset(
+    dataset_path,
+    muscles=None,
+    fs=1000,
+    modes=('single', 'multi'),
+    save_results=True,
+    verbose=True
+):
+    """
+    Preprocess EMG and run multi-kernel deconvolution for a single dataset folder.
+    Reads aligned EMG CSV files (*_align.csv) generated by movement_state_detector.
+    
+    Parameters
+    ----------
+    dataset_path : str
+        Path to dataset directory containing EMG subfolder
+    muscles : list of str, optional
+        List of muscle channel names to process
+    fs : float
+        Sampling frequency in Hz
+    modes : tuple of str
+        Deconvolution modes to run ('single', 'multi')
+    save_results : bool
+        Whether to save plots and NPZ files
+    verbose : bool
+        Print progress messages
+        
+    Returns
+    -------
+    dict
+        Results per mode with pickle and npz paths
+    """
+    import glob
+    import pickle
+    import pandas as pd
+    
+    if muscles is None:
+        muscles = ['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF']
+    
+    preprocessor = AlternativeProcessor(fs=fs)
+    
+    # Read aligned EMG CSV file directly (output from movement_state_detector)
+    emg_folder = os.path.join(dataset_path, 'EMG')
+    align_files = glob.glob(os.path.join(emg_folder, '*_align.csv'))
+    
+    if not align_files:
+        raise FileNotFoundError(f"No *_align.csv file found in {emg_folder}. Please run movement_state_detector first.")
+    
+    # Use the first align file found
+    align_file = align_files[0]
+    if verbose:
+        print(f"Reading aligned EMG file: {os.path.basename(align_file)}")
+    
+    df0 = pd.read_csv(align_file)
+    
+    # Map LGL→LGA and RGL→RGA
+    channel_mapping = {'LGL': 'LGA', 'RGL': 'RGA'}
+    df0 = df0.rename(columns=channel_mapping)
+    
+    available = [m for m in muscles if m in df0.columns]
+    if not available:
+        raise ValueError(f"No expected channels found in {align_file}; available: {df0.columns.tolist()}")
+    
+    # Preprocess each channel
+    clean_signals = []
+    for ch in available:
+        arr = df0[ch].astype(float).values
+        clean_signals.append(preprocessor.process(arr))
+    clean_signals = np.column_stack(clean_signals)
+
+    # NaN protection
+    clean_df = pd.DataFrame(clean_signals, columns=available)
+    if clean_df.isna().values.any():
+        clean_df = clean_df.interpolate(axis=0).bfill().ffill().fillna(0.0)
+    clean_signals = clean_df.to_numpy()
+
+    results = {}
+    top_save = os.path.join(dataset_path, 'multi-kernel-deconv')
+    ensure_dir(top_save)
+    
+    for mode in modes:
+        mode_dir = os.path.join(top_save, mode)
+        ensure_dir(mode_dir)
+        
+        if verbose:
+            print(f"Running multi-kernel deconvolution ({mode}) ...")
+        
+        deconv_result = multi_kernel_deconv(
+            clean_signals,
+            fs,
+            force_mode=mode,
+            save_dir=mode_dir if save_results else None,
+            max_iter=10,
+            tol=1e-6,
+            ch_labels=available
+        )
+        
+        # Save pickle summary
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        pkl_path = os.path.join(mode_dir, f'results_{mode}_{ts}.pkl')
+        with open(pkl_path, 'wb') as pf:
+            pickle.dump(deconv_result, pf, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        results[mode] = {'pickle': pkl_path, 'n_channels': len(deconv_result)}
+    
+    return results
+
+def process_all_datasets(
+    parent_dir,
+    muscles=None,
+    fs=1000,
+    modes=('single', 'multi'),
+    save_results=True,
+    verbose=True
+):
+    """
+    Batch process all path2_* datasets in parent_dir.
+    
+    Parameters
+    ----------
+    parent_dir : str
+        Parent directory containing path2_* subdirectories
+    muscles : list of str, optional
+        List of muscle channel names to process
+    fs : float
+        Sampling frequency in Hz
+    modes : tuple of str
+        Deconvolution modes to run ('single', 'multi')
+    save_results : bool
+        Whether to save plots and NPZ files
+    verbose : bool
+        Print progress messages
+        
+    Returns
+    -------
+    dict
+        Master summary with results for all datasets
+    """
+    import glob
+    
+    pattern = os.path.join(parent_dir, 'path2*')
+    data_dirs = sorted([d for d in glob.glob(pattern) if os.path.isdir(d)])
+    
+    if not data_dirs:
+        print(f"No path2* directories found under {parent_dir}")
+        return {}
+
+    master_results = {
+        'meta': {
+            'parent_dir': parent_dir,
+            'fs': fs,
+            'muscles': muscles if muscles else ['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF'],
+            'modes': modes,
+            'timestamp': datetime.now().isoformat()
+        },
+        'datasets': {}
+    }
+
+    for data_dir in data_dirs:
+        print(f"\n=== Processing dataset: {data_dir} ===")
+        try:
+            ds_results = process_single_dataset(
+                data_dir,
+                muscles=muscles,
+                fs=fs,
+                modes=modes,
+                save_results=save_results,
+                verbose=verbose
+            )
+            master_results['datasets'][os.path.basename(data_dir)] = {
+                'success': True,
+                'files': ds_results
+            }
+        except Exception as e:
+            print(f"Error processing {data_dir}: {e}")
+            master_results['datasets'][os.path.basename(data_dir)] = {
+                'success': False,
+                'error': str(e)
+            }
+
+    # Save master summary
+    master_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    master_fn = os.path.join(parent_dir, f"master_results_summary_{master_ts}.json")
+    with open(master_fn, 'w', encoding='utf-8') as mf:
+        json.dump(master_results, mf, ensure_ascii=False, indent=2)
+    print(f"All done. Master summary saved to {master_fn}")
+    return master_results
+
+def main():
+    """
+    Main entry point for EMG multi-kernel deconvolution processing.
+    
+    Usage examples:
+    
+    1. Process single dataset:
+       python EMG_to_MUAP.py
+       (modify DATASET_PATH in code)
+       
+    2. Process all datasets in parent directory:
+       Uncomment process_all_datasets() call
+    """
+    # Process only path2_02 dataset
+    DATASET_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225/path2_02'
+    
+    print(f"Processing single dataset: {DATASET_PATH}")
+    results = process_single_dataset(
+        dataset_path=DATASET_PATH,
+        muscles=['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF'],
+        fs=1000,
+        modes=('single', 'multi'),
+        save_results=True,
+        verbose=True
+    )
+    
+    print("\n=== Processing Complete ===")
+    print(f"Results saved to: {DATASET_PATH}/multi-kernel-deconv/")
+    for mode, info in results.items():
+        print(f"  {mode} mode:")
+        print(f"    - Pickle: {info['pickle']}")
+        print(f"    - Channels: {info['n_channels']}")
+    
+    # To process all datasets, uncomment below:
+    # PARENT_DIR = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
+    # master_results = process_all_datasets(
+    #     parent_dir=PARENT_DIR,
+    #     muscles=['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF'],
+    #     fs=1000,
+    #     modes=('single', 'multi'),
+    #     save_results=True,
+    #     verbose=True
+    # )
+
+if __name__ == "__main__":
+    main()
+
+# %%

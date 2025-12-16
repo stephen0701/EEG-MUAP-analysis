@@ -453,69 +453,299 @@ class IntegratedMovementStateSegmentor:
         
         return transient_results
     
-    def load_sync_time_markers(self, base_path: str, prefix: str = 'path2_') -> Dict:
+    def load_and_align_multimodal_data(self, dataset_path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[object]]:
         """
-        Load synchronization time markers
+        Load and align EEG, EMG, and TRC data to a common timebase starting from 0.
+        Returns: (eeg_times, emg_times, trc_times, emg_obj) where emg_obj is the EMG_DATA instance
         """
-        folders = [d for d in os.listdir(base_path) 
-                  if d.startswith(prefix) and os.path.isdir(os.path.join(base_path, d))]
-        sync_dict = {}
+        print(f"\n{'='*80}")
+        print("Loading and aligning multimodal data (EEG, EMG, TRC)")
+        print(f"{'='*80}")
         
-        for name in folders:
-            npz_path = os.path.join(base_path, name, 'opensim', 'sync_time_marker.npz')
-            if os.path.exists(npz_path):
+        # Load EEG timestamps
+        eeg_folder = os.path.join(dataset_path, 'EEG')
+        eeg_times = None
+        if os.path.exists(eeg_folder):
+            # Skip already aligned files
+            csv_files = [f for f in glob.glob(os.path.join(eeg_folder, '*.csv')) 
+                        if '_align.csv' not in f]
+            if csv_files:
                 try:
-                    with np.load(npz_path, allow_pickle=True) as npz:
-                        items = []
-                        for k in npz.files:
-                            items.append(npz[k])
-                        # Fix: should modify items[0] (sync_timeline), not items[1] (marker)
-                        if len(items) >= 2 and isinstance(items[0], np.ndarray) and items[0].size > 0:
-                            arr = items[0].astype(float).copy().reshape(-1)
-                            new_val = arr[-1] + 0.0333
-                            items[0] = np.concatenate([arr, np.array([new_val])])
-                        sync_dict[name] = items
+                    eeg_df = pd.read_csv(csv_files[0])
+                    if eeg_df.shape[1] >= 2:  # At least time + 1 channel
+                        eeg_times = eeg_df.iloc[:, 0].to_numpy(dtype=float)
+                        print(f"Loaded EEG data: {len(eeg_times)} samples")
                 except Exception as e:
-                    warnings.warn(f"Failed to load {npz_path}: {e}")
-                    sync_dict[name] = None
-            else:
-                sync_dict[name] = None
-        return sync_dict
-    '''
-    def count_videotime_from_sync(self, sync_entry) -> Optional[np.ndarray]:
-        if sync_entry is None or len(sync_entry) < 2:
-            return None
-        try:
-            frame_time_data = np.array(sync_entry[1]).astype(float).reshape(-1)
-            start_time_arr = np.array(sync_entry[0]).astype(float).reshape(-1)
-            start_time = start_time_arr[0]
-            timeOfvideo = (frame_time_data - start_time).T  # Row vector like MATLAB
-            return timeOfvideo
-        except Exception:
-            return None
-    '''
+                    print(f"Error loading EEG: {e}")
         
-    def count_videotime_from_sync(self, sync_entry) -> Optional[np.ndarray]:
-        """
-        Calculate video time from sync data
-        sync_entry[0] = sync_timeline (frame timestamps array)
-        sync_entry[1] = marker (start/end markers only)
-        """
-        if sync_entry is None or len(sync_entry) < 1:
-            return None
+        # Load EMG timestamps (use original EMG CSV file)
+        emg_times = None
+        emg_obj = None
         try:
-            # Use sync_timeline directly (sync_entry[0])
-            # Note: load_sync_time_markers already adds one extra frame (last + 0.0333s)
-            frame_time_data = np.array(sync_entry[0]).astype(float).reshape(-1)
-            timeOfvideo = frame_time_data.T  # Use directly as time vector
-            return timeOfvideo
-        except Exception:
-            return None
+            # Import EMG_DATA class to read original EMG file
+            import sys
+            tool_kits_path = os.path.join(os.path.dirname(__file__), '..')
+            if tool_kits_path not in sys.path:
+                sys.path.insert(0, tool_kits_path)
+            
+            from tool_kits.EMG_class import EMG_DATA
+            
+            # Read EMG data the same way as emg_deconv_runner
+            emg_obj = EMG_DATA(dataset_path)
+            emg_obj.read_emg_file(0)
+            event_indices = emg_obj.get_event_id_indices()
+            
+            if event_indices is not None and len(event_indices) >= 2:
+                first_event_index = int(event_indices[0])
+                last_event_index = int(event_indices[-1])
+                emg_obj.our_data = emg_obj.our_data.iloc[first_event_index:last_event_index+1].reset_index(drop=True)
+                emg_times = emg_obj.our_data['Timestamp'].to_numpy(dtype=float)
+                print(f"Loaded EMG data: {len(emg_times)} samples")
+            else:
+                print("Warning: No valid event_id indices found in EMG data")
+        except Exception as e:
+            print(f"Error loading EMG: {e}")
+        
+        # Load TRC timestamps (will be created from frame rate)
+        trc_times = None
+        # TRC times will be handled in process_single_file
+        
+        return eeg_times, emg_times, trc_times, emg_obj
     
-    def process_single_file(self, trc_path: str, folder_name: str, sync_time_data: np.ndarray = None, 
-                          data_label: str = None, base_output_folder: str = None) -> Dict:
+    def align_timebase(self, eeg_times: Optional[np.ndarray], emg_times: Optional[np.ndarray], 
+                      trc_times: np.ndarray, trc_data: pd.DataFrame) -> Tuple[np.ndarray, pd.DataFrame, Dict]:
         """
-        Process single TRC file (using segmental weighted method)
+        Align EEG, EMG, and TRC data to a common timebase starting from 0.
+        Strategy: Use duration to determine which data to trim.
+        Returns: (aligned_trc_times, aligned_trc_data, alignment_info)
+        """
+        print(f"\n{'='*80}")
+        print("TIME ALIGNMENT ANALYSIS")
+        print(f"{'='*80}")
+        print("\nOriginal time ranges:")
+        
+        # Calculate durations (relative time)
+        if eeg_times is not None:
+            eeg_duration = eeg_times[-1] - eeg_times[0]
+            eeg_start = eeg_times[0]
+            print(f"  EEG: [{eeg_times[0]:.3f}, {eeg_times[-1]:.3f}]s (duration: {eeg_duration:.2f}s, {len(eeg_times)} samples)")
+        else:
+            eeg_duration = None
+            eeg_start = None
+            print("  EEG: Not available")
+        
+        if emg_times is not None:
+            emg_duration = emg_times[-1] - emg_times[0]
+            emg_start = emg_times[0]
+            print(f"  EMG: [{emg_times[0]:.3f}, {emg_times[-1]:.3f}]s (duration: {emg_duration:.2f}s, {len(emg_times)} samples)")
+        else:
+            emg_duration = None
+            emg_start = None
+            print("  EMG: Not available")
+        
+        trc_duration = trc_times[-1] - trc_times[0]
+        trc_start = trc_times[0]
+        print(f"  TRC: [{trc_times[0]:.3f}, {trc_times[-1]:.3f}]s (duration: {trc_duration:.2f}s, {len(trc_times)} samples)")
+        
+        # Determine trimming strategy based on duration
+        alignment_info = {
+            'eeg_duration': eeg_duration,
+            'emg_duration': emg_duration,
+            'trc_duration': trc_duration,
+            'trim_applied': False,
+            'trim_amount': 0.0,
+            'trim_target': None,
+            'eeg_trim_samples': 0,
+            'emg_trim_samples': 0,
+            'aligned_eeg_times': None,
+            'aligned_emg_times': None
+        }
+        
+        # Use EEG/EMG duration as reference (they should be identical)
+        neural_duration = eeg_duration if eeg_duration is not None else emg_duration
+        
+        if neural_duration is not None:
+            duration_diff = trc_duration - neural_duration
+            
+            print(f"\nDuration difference (TRC - Neural): {duration_diff:.3f}s")
+            
+            if duration_diff > 0.1:  # TRC is longer, trim TRC front
+                trim_amount = duration_diff
+                trim_frames = int(np.ceil(trim_amount * self.fs))
+                print(f"Trimming: TRC (trim {trim_amount:.2f}s from start)")
+                print(f"  Removing {trim_frames} frames from TRC front")
+                
+                trc_data = trc_data.iloc[trim_frames:].reset_index(drop=True)
+                trc_times = trc_times[trim_frames:]
+                
+                alignment_info['trim_applied'] = True
+                alignment_info['trim_amount'] = trim_amount
+                alignment_info['trim_target'] = 'TRC'
+                
+            elif duration_diff < -0.1:  # Neural is longer, trim EEG/EMG front
+                trim_amount = -duration_diff
+                print(f"Trimming: EEG/EMG (trim {trim_amount:.2f}s from start)")
+                
+                # Trim EEG
+                if eeg_times is not None:
+                    # Find samples to trim based on time
+                    eeg_fs = len(eeg_times) / eeg_duration if eeg_duration > 0 else 500
+                    eeg_trim_samples = int(np.ceil(trim_amount * eeg_fs))
+                    eeg_times = eeg_times[eeg_trim_samples:]
+                    print(f"  Removed {eeg_trim_samples} samples from EEG front")
+                    alignment_info['eeg_trim_samples'] = eeg_trim_samples
+                
+                # Trim EMG
+                if emg_times is not None:
+                    # Find samples to trim based on time
+                    emg_fs = len(emg_times) / emg_duration if emg_duration > 0 else 1000
+                    emg_trim_samples = int(np.ceil(trim_amount * emg_fs))
+                    emg_times = emg_times[emg_trim_samples:]
+                    print(f"  Removed {emg_trim_samples} samples from EMG front")
+                    alignment_info['emg_trim_samples'] = emg_trim_samples
+                
+                alignment_info['trim_applied'] = True
+                alignment_info['trim_amount'] = trim_amount
+                alignment_info['trim_target'] = 'EEG/EMG'
+        
+        # Shift all data to start from 0
+        print(f"\nAligned time ranges (shifted to start from 0):")
+        
+        trc_times_aligned = trc_times - trc_times[0]
+        print(f"  TRC: [{trc_times_aligned[0]:.3f}, {trc_times_aligned[-1]:.3f}]s")
+        
+        # Shift EEG times to start from 0
+        if eeg_times is not None:
+            eeg_times_aligned = eeg_times - eeg_times[0]
+            alignment_info['aligned_eeg_times'] = eeg_times_aligned
+            print(f"  EEG: [{eeg_times_aligned[0]:.3f}, {eeg_times_aligned[-1]:.3f}]s")
+        
+        # Shift EMG times to start from 0
+        if emg_times is not None:
+            emg_times_aligned = emg_times - emg_times[0]
+            alignment_info['aligned_emg_times'] = emg_times_aligned
+            print(f"  EMG: [{emg_times_aligned[0]:.3f}, {emg_times_aligned[-1]:.3f}]s")
+        
+        alignment_info['final_duration'] = trc_times_aligned[-1] - trc_times_aligned[0]
+        alignment_info['final_samples'] = len(trc_times_aligned)
+        
+        print(f"\nFinal aligned duration: {alignment_info['final_duration']:.2f}s")
+        print(f"{'='*80}\n")
+        
+        return trc_times_aligned, trc_data, alignment_info
+    
+    def save_aligned_neural_data(self, dataset_path: str, alignment_info: Dict, emg_obj=None):
+        """
+        Save aligned EEG/EMG CSV files only (no NPZ files)
+        """
+        if not alignment_info or not alignment_info.get('trim_applied', False):
+            return
+        
+        print(f"\nSaving aligned neural data...")
+        
+        # Trim and save EMG CSV file if EMG was trimmed
+        if alignment_info.get('emg_trim_samples', 0) > 0 and emg_obj is not None:
+            self._trim_emg_data(dataset_path, alignment_info['emg_trim_samples'], 
+                               alignment_info.get('aligned_emg_times'), emg_obj)
+        
+        # Trim and save EEG CSV files if EEG was trimmed
+        if alignment_info.get('eeg_trim_samples', 0) > 0:
+            self._trim_eeg_data(dataset_path, alignment_info['eeg_trim_samples'], 
+                               alignment_info.get('aligned_eeg_times'))
+        
+        print(f"Aligned neural data saved successfully\n")
+    
+    def _trim_emg_data(self, dataset_path: str, trim_samples: int, aligned_times: np.ndarray, emg_obj):
+        """
+        Trim original EMG CSV file and save with _align suffix
+        Uses emg_obj.our_data which is already processed (event_id trimmed)
+        """
+        if emg_obj is None or not hasattr(emg_obj, 'our_data'):
+            print(f"    Warning: EMG object not available for trimming")
+            return
+        
+        emg_folder = os.path.join(dataset_path, 'EMG')
+        if not os.path.exists(emg_folder):
+            print(f"    Warning: EMG folder not found: {emg_folder}")
+            return
+        
+        # Find original EMG CSV files to get the filename pattern
+        csv_files = glob.glob(os.path.join(emg_folder, 'EMG_*.csv'))
+        if not csv_files:
+            print(f"    Warning: No EMG CSV files found in {emg_folder}")
+            return
+        
+        try:
+            # Use emg_obj.our_data which is already processed (event_id trimmed)
+            df = emg_obj.our_data.copy()
+            
+            # Trim data for alignment
+            df_trimmed = df.iloc[trim_samples:].reset_index(drop=True)
+            
+            # Update timestamps if available
+            if aligned_times is not None and len(aligned_times) == len(df_trimmed):
+                if 'Timestamp' in df_trimmed.columns:
+                    df_trimmed['Timestamp'] = aligned_times
+                else:
+                    # Assume first column is time
+                    df_trimmed.iloc[:, 0] = aligned_times
+            
+            # Use the first CSV file's name pattern for output
+            base_name = os.path.basename(csv_files[0])
+            aligned_name = base_name.replace('.csv', '_align.csv')
+            aligned_file = os.path.join(emg_folder, aligned_name)
+            
+            df_trimmed.to_csv(aligned_file, index=False)
+            print(f"    Trimmed EMG data saved: EMG/{aligned_name}")
+            
+        except Exception as e:
+            print(f"    Error trimming EMG data: {e}")
+    
+    def _trim_eeg_data(self, dataset_path: str, trim_samples: int, aligned_times: np.ndarray):
+        """
+        Trim EEG CSV files and save with _align suffix (e.g., EEG_path2_02_162639_zscore_align.csv)
+        """
+        eeg_folder = os.path.join(dataset_path, 'EEG')
+        if not os.path.exists(eeg_folder):
+            print(f"    Warning: EEG folder not found: {eeg_folder}")
+            return
+        
+        # Skip already aligned files
+        csv_files = [f for f in glob.glob(os.path.join(eeg_folder, '*.csv')) 
+                     if '_align.csv' not in f]
+        
+        if not csv_files:
+            print(f"    Warning: No EEG CSV files found in {eeg_folder}")
+            return
+        
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file)
+                
+                # Trim data
+                df_trimmed = df.iloc[trim_samples:].reset_index(drop=True)
+                
+                # Update timestamps if available
+                if aligned_times is not None and len(aligned_times) == len(df_trimmed):
+                    # Update first column (assumed to be time)
+                    df_trimmed.iloc[:, 0] = aligned_times
+                
+                # Save with _align suffix (e.g., EEG_path2_02_162639_zscore_align.csv)
+                base_name = os.path.basename(csv_file)
+                aligned_name = base_name.replace('.csv', '_align.csv')
+                aligned_file = os.path.join(eeg_folder, aligned_name)
+                
+                df_trimmed.to_csv(aligned_file, index=False)
+                print(f"    Trimmed EEG data saved: EEG/{aligned_name}")
+                
+            except Exception as e:
+                print(f"    Error trimming {csv_file}: {e}")
+    
+    def process_single_file(self, trc_path: str, folder_name: str, data_label: str = None, 
+                          base_output_folder: str = None, dataset_path: str = None) -> Dict:
+        """
+        Process single TRC file (using segmental weighted method) with multimodal alignment
+        TRC time vector is generated from frame rate: trc_times = np.arange(num_frames) / self.fs
         """
         if data_label is None:
             data_label = folder_name
@@ -527,7 +757,23 @@ class IntegratedMovementStateSegmentor:
         if trc_data is None:
             return {}
         
-        # Use segmental method to calculate COM velocity
+        # Load and align multimodal data if dataset_path provided
+        alignment_info = None
+        emg_obj = None
+        if dataset_path is not None:
+            eeg_times, emg_times, _, emg_obj = self.load_and_align_multimodal_data(dataset_path)
+            
+            # Create TRC time vector (relative time from frame rate)
+            num_frames = trc_data.shape[0]
+            trc_times = np.arange(num_frames) / self.fs
+            
+            # Align timebase (duration-based alignment)
+            trc_times, trc_data, alignment_info = self.align_timebase(eeg_times, emg_times, trc_times, trc_data)
+            
+            # Save aligned EEG/EMG CSV files only
+            self.save_aligned_neural_data(dataset_path, alignment_info, emg_obj)
+        
+        # Use segmental method to calculate COM velocity with aligned data
         try:
             vcm_data, time_vector, cm_df = self.compute_vcm_segmental(
                 trc_data, SR=self.fs, SRd=self.fs, lowpass_cut=6.0)
@@ -535,12 +781,11 @@ class IntegratedMovementStateSegmentor:
             print(f"Error computing segmental VCM for {data_label}: {e}")
             return {}
         
-        # Use sync time data if available
-        if sync_time_data is not None and len(sync_time_data) == len(vcm_data):
-            time_vector = sync_time_data
-            print(f"Using sync time data for {data_label}")
+        # Use aligned TRC time vector for plotting
+        if alignment_info is not None:
+            time_vector = np.arange(len(vcm_data)) / self.fs
         
-        # Create individual output folder for this dataset (no subfolders)
+        # Create individual output folder for this dataset
         individual_output_folder = os.path.join(base_output_folder, folder_name, 'movement_analysis')
         os.makedirs(individual_output_folder, exist_ok=True)
         
@@ -552,6 +797,10 @@ class IntegratedMovementStateSegmentor:
         results['vcm_data'] = vcm_data
         results['time_vector'] = time_vector
         results['center_of_mass'] = cm_df
+        
+        # Add alignment info if available
+        if alignment_info is not None:
+            results['alignment_info'] = alignment_info
         
         # Save individual results directly to output folder (no subfolders)
         self.save_individual_results(results, individual_output_folder, data_label)
@@ -606,9 +855,6 @@ class IntegratedMovementStateSegmentor:
         """
         Batch process multiple files (using segmental weighted method)
         """
-        # Load sync markers
-        sync_map = self.load_sync_time_markers(base_path, prefix=prefix)
-        
         # Find subdirectories
         subdirs = sorted([d for d in os.listdir(base_path) 
                          if d.startswith(prefix) and os.path.isdir(os.path.join(base_path, d))])
@@ -620,11 +866,14 @@ class IntegratedMovementStateSegmentor:
         all_results = {}
         
         for i, folder_name in enumerate(subdirs, start=1):
-            print(f"Processing {i}/{len(subdirs)}: {folder_name}")
+            dataset_path = os.path.join(base_path, folder_name)
+            print(f"\n{'='*80}")
+            print(f"Processing dataset {i}/{len(subdirs)}: {folder_name}")
+            print(f"{'='*80}")
             
             try:
                 # Find TRC files
-                trc_pattern = os.path.join(base_path, folder_name, 'opensim', '*.trc')
+                trc_pattern = os.path.join(dataset_path, 'opensim', '*.trc')
                 trc_files = glob.glob(trc_pattern)
                 
                 if not trc_files:
@@ -632,17 +881,27 @@ class IntegratedMovementStateSegmentor:
                     continue
                 
                 trc_path = trc_files[0]  # Use first TRC file
+                print(f"Found TRC file: {os.path.basename(trc_path)}")
                 
-                # Get sync time data
-                sync_entry = sync_map.get(folder_name, None)
-                timeOfvideo = self.count_videotime_from_sync(sync_entry)
-                
-                # Process file
-                results = self.process_single_file(trc_path, folder_name, timeOfvideo, folder_name, base_path)
+                # Process file with multimodal alignment (no sync_time_data needed)
+                results = self.process_single_file(
+                    trc_path=trc_path,
+                    folder_name=folder_name,
+                    data_label=folder_name,
+                    base_output_folder=base_path,
+                    dataset_path=dataset_path
+                )
                 
                 if results:
                     all_results[folder_name] = results
                     print(f"[OK] Successfully processed {folder_name}")
+                    
+                    # Print alignment info if available
+                    if 'alignment_info' in results:
+                        align_info = results['alignment_info']
+                        if align_info.get('trim_applied', False):
+                            print(f"  - Alignment: Trimmed {align_info['trim_target']} by {align_info['trim_amount']:.3f}s")
+                        print(f"  - Final duration: {align_info.get('final_duration', 0):.2f}s")
                     
                     # Print segmentation results summary
                     if 'sit_to_stand' in results and results['sit_to_stand']:
@@ -700,7 +959,7 @@ class IntegratedMovementStateSegmentor:
         individual_output_folder = os.path.join(output_folder, folder_name, 'movement_analysis')
         os.makedirs(individual_output_folder, exist_ok=True)
         
-        return self.process_single_file(trc_path, folder_name, None, data_label, output_folder)
+        return self.process_single_file(trc_path, folder_name, data_label, output_folder)
 
 
 def main():

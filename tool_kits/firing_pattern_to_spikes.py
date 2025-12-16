@@ -29,7 +29,6 @@ import pickle
 from typing import Tuple, Optional, Dict, Any, Union, List
 import warnings
 
-
 def mad(x: np.ndarray) -> float:
     """Median absolute deviation (robust scale estimator, normalized for Gaussian)."""
     return np.median(np.abs(x - np.median(x))) / 0.6745
@@ -54,7 +53,6 @@ def preprocess_firing_pattern(firing_pattern: np.ndarray,
     # gaussian_filter1d sigma is in samples
     return gaussian_filter1d(arr, sigma=smooth_sigma, mode='nearest')
 
-
 def auto_threshold_by_mad(arr: np.ndarray, k: float = 3.0) -> float:
     """
     Use robust median + k*MAD to determine threshold (recommended for asymmetric noise).
@@ -69,7 +67,6 @@ def auto_threshold_by_mad(arr: np.ndarray, k: float = 3.0) -> float:
     med = np.median(arr)
     dev = mad(arr)
     return float(med + k * dev)
-
 
 def detect_peaks_with_params(arr: np.ndarray,
                              height: Optional[float] = None,
@@ -89,7 +86,6 @@ def detect_peaks_with_params(arr: np.ndarray,
     """
     peaks, props = signal.find_peaks(arr, height=height, prominence=prominence, distance=distance_samples)
     return peaks, props
-
 
 def enforce_min_isi_nms(peaks: np.ndarray,
                         arr: np.ndarray,
@@ -129,7 +125,6 @@ def enforce_min_isi_nms(peaks: np.ndarray,
     suppressed_sorted = np.array(sorted(suppressed), dtype=int)
     return kept_sorted, suppressed_sorted
 
-
 def convert_firing_to_spikes(firing_pattern: np.ndarray,
                             fs: float,
                             threshold: Optional[float] = None,
@@ -138,7 +133,8 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
                             smooth_sigma_ms: float = 0.0,
                             min_isi_ms: float = 30.0,
                             min_prominence: Optional[float] = None,
-                            return_binary: bool = True
+                            return_binary: bool = True,
+                            exclude_time_range: Optional[Tuple[float, float]] = None
                             ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray]:
     """
     Convert firing pattern to spike indices and times.
@@ -154,9 +150,11 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
         min_isi_ms: Minimum ISI (ms), default 30 ms (reasonable for MU)
         min_prominence: find_peaks prominence parameter (None for automatic)
         return_binary: Whether to return binary vector
+        exclude_time_range: Optional (start_time, end_time) in seconds to exclude spikes
+                          e.g., (0, 5) to exclude baseline period
         
     Returns:
-        spike_indices (samples), spike_times_s (seconds), binary_vector (0/1), threshold_used
+        spike_indices (samples), spike_times_s (seconds), binary_vector (0/1), threshold_used, suppressed_indices
     """
     arr = np.asarray(firing_pattern).astype(float)
     n = arr.shape[0]
@@ -193,6 +191,20 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
     min_samples = max(1, int(round(min_isi_ms * fs / 1000.0)))
     spike_indices, suppressed_indices = enforce_min_isi_nms(raw_peaks, processed, min_samples=min_samples)
 
+    # Filter out spikes in excluded time range (e.g., baseline period)
+    if exclude_time_range is not None:
+        start_time, end_time = exclude_time_range
+        spike_times_temp = spike_indices.astype(float) / float(fs)
+        
+        # Find spikes within valid time range (outside excluded range)
+        valid_mask = (spike_times_temp < start_time) | (spike_times_temp >= end_time)
+        spike_indices = spike_indices[valid_mask]
+        
+        # Count excluded spikes for reporting
+        n_excluded = np.sum(~valid_mask)
+        if n_excluded > 0:
+            print(f"      Excluded {n_excluded} spikes in time range [{start_time:.1f}s - {end_time:.1f}s]")
+    
     # Binary vector
     binary_vec = np.zeros(n, dtype=int)
     if return_binary:
@@ -201,7 +213,6 @@ def convert_firing_to_spikes(firing_pattern: np.ndarray,
     spike_times_s = spike_indices.astype(float) / float(fs)
 
     return spike_indices, spike_times_s, binary_vec, thr, suppressed_indices
-
 
 def analyze_spike_statistics(spike_times_s: np.ndarray) -> Dict[str, float]:
     """
@@ -418,17 +429,17 @@ def plot_kernels_and_spikes(kernels: np.ndarray,
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     return fig
 
-def load_npz_data(dataset_path: str) -> Dict:
+def load_pickle_data(dataset_path: str) -> Dict:
     """
-    Load NPZ deconvolution results with proper channel parsing.
+    Load pickle deconvolution results from EMG_to_MUAP.py output.
     
     Args:
         dataset_path: Path to dataset directory
         
     Returns:
-        Dictionary containing loaded NPZ data organized by mode and channel
+        Dictionary containing loaded pickle data organized by mode and channel
     """
-    npz_data = {}
+    pickle_data = {}
     
     for mode in ['single', 'multi']:
         mode_dir = os.path.join(dataset_path, 'multi-kernel-deconv', mode)
@@ -436,84 +447,69 @@ def load_npz_data(dataset_path: str) -> Dict:
             print(f"  Directory not found: {mode_dir}")
             continue
         
-        # Find NPZ file
-        pattern = os.path.join(mode_dir, 'multi_kernel_deconv_results_*.npz')
-        npz_files = glob.glob(pattern)
-        if not npz_files:
-            print(f"  No NPZ files found in {mode_dir}")
+        # Find pickle file
+        pattern = os.path.join(mode_dir, f'results_{mode}_*.pkl')
+        pkl_files = glob.glob(pattern)
+        if not pkl_files:
+            print(f"  No pickle files found in {mode_dir}")
             continue
         
-        npz_file = sorted(npz_files)[-1]  # Latest file
-        print(f"  Loading {mode} mode from: {os.path.basename(npz_file)}")
+        pkl_file = sorted(pkl_files)[-1]  # Latest file
+        print(f"  Loading {mode} mode from: {os.path.basename(pkl_file)}")
         
         try:
-            with np.load(npz_file, allow_pickle=True) as data:
-                mode_data = {}
+            with open(pkl_file, 'rb') as f:
+                deconv_results = pickle.load(f)
+            
+            # deconv_results is a list of dicts, one per channel
+            # Each dict contains: sigmas, mode, K, X, recon_total, recon_components, 
+            #                     CWF, CWF_comp, conv_history, alpha, iterations, residual
+            
+            if not deconv_results:
+                print(f"    {mode} mode: no results in pickle file")
+                continue
+            
+            mode_data = {}
+            channel_labels = ['LGA', 'RGA', 'LTA', 'RTA', 'LBF', 'RBF', 'LRF', 'RRF']
+            
+            for ch_idx, ch_result in enumerate(deconv_results):
+                if ch_idx >= len(channel_labels):
+                    break
+                    
+                ch_label = channel_labels[ch_idx]
+                ch_data = {
+                    'kernel': ch_result['K'],                    # shape (kernel_len, n_kernels)
+                    'firing_pattern': ch_result['X'],            # shape (N, n_kernels)
+                    'CWF': ch_result['CWF'],                     # shape (N,)
+                    'CWF_comp': ch_result['CWF_comp'],           # shape (N, n_kernels)
+                    'recon_total': ch_result['recon_total'],     # shape (N,)
+                    'recon_components': ch_result['recon_components'],  # shape (N, n_kernels)
+                    'sigmas': ch_result['sigmas'],
+                    'alpha': ch_result['alpha'],
+                    'iterations': ch_result['iterations'],
+                    'residual': ch_result['residual']
+                }
                 
-                # Parse channel-specific data from NPZ
-                channel_labels = ['LGA', 'RGA', 'LTA', 'RTA', 'LBF', 'RBF', 'LRF', 'RRF']
-                
-                for ch_label in channel_labels:
-                    ch_data = {}
-                    
-                    # Look for kernel data (K matrix)
-                    k_key = f'{ch_label}_K'
-                    if k_key in data:
-                        ch_data['kernel'] = data[k_key]
-
-                    # Look for firing pattern data (X matrix)
-                    x_key = f'{ch_label}_X'
-                    if x_key in data:
-                        ch_data['firing_pattern'] = data[x_key]
-                        print(f"    Found {x_key}: shape {data[x_key].shape}")
-                    
-                    # Look for CWF data
-                    cwf_key = f'{ch_label}_CWF'
-                    if cwf_key in data:
-                        ch_data['CWF'] = data[cwf_key]
-                    
-                    # Look for component-wise CWF
-                    cwf_comp_key = f'{ch_label}_CWF_comp'
-                    if cwf_comp_key in data:
-                        ch_data['CWF_comp'] = data[cwf_comp_key]
-                    
-                    # Look for recon data
-                    recon_key = f'{ch_label}_recon_total'
-                    if recon_key in data:
-                        ch_data['recon_total'] = data[recon_key]
-                    
-                    # Look for per-component reconstructions
-                    recon_comp_key = f'{ch_label}_recon_components'
-                    if recon_comp_key in data:
-                        ch_data['recon_components'] = data[recon_comp_key]
-                    
-                    if ch_data:  # Only add if we found some data for this channel
-                        mode_data[ch_label] = ch_data
-                
-                # Also store any global data
-                for key in data.keys():
-                    if not any(key.startswith(ch) for ch in channel_labels):
-                        if not key.startswith('__'):  # Skip metadata
-                            mode_data[key] = data[key]
-                
-                # Only add mode_data if it has content
-                if mode_data:
-                    npz_data[mode] = mode_data
-                    print(f"    {mode} mode: found data for {len([k for k, v in mode_data.items() if isinstance(v, dict)])} channels")
-                else:
-                    print(f"    {mode} mode: no channel data found")
+                mode_data[ch_label] = ch_data
+                print(f"    Found {ch_label}: firing_pattern shape {ch_result['X'].shape}")
+            
+            if mode_data:
+                pickle_data[mode] = mode_data
+                print(f"    {mode} mode: loaded data for {len(mode_data)} channels")
         
         except Exception as e:
-            print(f"Error loading {npz_file}: {e}")
+            print(f"Error loading {pkl_file}: {e}")
+            import traceback
+            traceback.print_exc()
     
-    return npz_data
-
+    return pickle_data
 
 def process_single_dataset_spikes(dataset_path: str, 
                                  fs: float = 1000.0,
                                  spike_params: Optional[Dict] = None,
                                  save_results: bool = True,
-                                 plot_results: bool = True) -> Dict:
+                                 plot_results: bool = True,
+                                 exclude_time_range: Optional[Tuple[float, float]] = None) -> Dict:
     """
     Process firing patterns from a single dataset to extract spikes.
     Each column of firing pattern array is processed separately.
@@ -524,6 +520,8 @@ def process_single_dataset_spikes(dataset_path: str,
         spike_params: Parameters for spike detection
         save_results: Whether to save results
         plot_results: Whether to create and save plots
+        exclude_time_range: Optional (start_time, end_time) in seconds to exclude spikes
+                          e.g., (0, 5) to exclude baseline period
         
     Returns:
         Dictionary with spike data for each channel, mode, and component
@@ -540,10 +538,10 @@ def process_single_dataset_spikes(dataset_path: str,
     dataset_name = os.path.basename(dataset_path)
     print(f"Processing dataset: {dataset_name}")
     
-    # Load NPZ data
-    npz_data = load_npz_data(dataset_path)
-    if not npz_data:
-        print(f"No NPZ data found in {dataset_path}")
+    # Load pickle data
+    pickle_data = load_pickle_data(dataset_path)
+    if not pickle_data:
+        print(f"No pickle data found in {dataset_path}")
         return {}
     
     # Create output directory
@@ -555,11 +553,11 @@ def process_single_dataset_spikes(dataset_path: str,
     channel_labels = ['LGA', 'RGA', 'LTA', 'RTA', 'LBF', 'RBF', 'LRF', 'RRF']
     
     for mode in ['single', 'multi']:
-        if mode not in npz_data:
+        if mode not in pickle_data:
             continue
         
         mode_results = {}
-        mode_data = npz_data[mode]
+        mode_data = pickle_data[mode]
         print(f"\nProcessing {mode.upper()} mode:")
         
         for ch_label in channel_labels:
@@ -591,11 +589,8 @@ def process_single_dataset_spikes(dataset_path: str,
                 
                 # Extract spikes from this component
                 spike_indices, spike_times, binary_vec, threshold, suppressed_indices = convert_firing_to_spikes(
-                    component_data, fs, **spike_params
+                    component_data, fs, exclude_time_range=exclude_time_range, **spike_params
                 )
-                
-                # Print suppressed indices
-                print(f"    Component {comp_idx+1}: suppressed_indices = {suppressed_indices}")
 
                 # Analyze statistics
                 stats = analyze_spike_statistics(spike_times)
@@ -687,11 +682,11 @@ def process_single_dataset_spikes(dataset_path: str,
     
     return spike_results
 
-
 def process_all_datasets_spikes(base_path: str, 
                                prefix: str = 'path2_',
                                fs: float = 1000.0,
-                               spike_params: Optional[Dict] = None) -> Dict:
+                               spike_params: Optional[Dict] = None,
+                               exclude_time_range: Optional[Tuple[float, float]] = None) -> Dict:
     """
     Process all datasets in base_path to extract spikes from firing patterns.
     
@@ -700,6 +695,7 @@ def process_all_datasets_spikes(base_path: str,
         prefix: Dataset folder prefix
         fs: Sampling rate (Hz)
         spike_params: Parameters for spike detection
+        exclude_time_range: Optional (start_time, end_time) in seconds to exclude spikes
         
     Returns:
         Dictionary with results for all datasets
@@ -721,7 +717,8 @@ def process_all_datasets_spikes(base_path: str,
         try:
             results = process_single_dataset_spikes(
                 dataset_path, fs=fs, spike_params=spike_params,
-                save_results=True, plot_results=True
+                save_results=True, plot_results=True,
+                exclude_time_range=exclude_time_range
             )
             
             if results:
@@ -765,17 +762,17 @@ def process_all_datasets_spikes(base_path: str,
     
     return all_results
 
-
 # ---------------------- Real Data Processing ----------------------
 if __name__ == "__main__":
     # Configuration matching your setup
-    base_path = '/home/ntk/exo/ExoskeletonPowerAsistance/simulation/mocap_EMG_EEG_data/20241225/'
+    base_path = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225/'
     fs = 1000.0  # Sampling rate in Hz
 
-    # path2_02  percentile threshold
-    test_dataset = os.path.join(base_path, 'path2_04')
+    # Test with path2_02 using percentile threshold
+    test_dataset = os.path.join(base_path, 'path2_02')
     if os.path.exists(test_dataset):
         print("\n=== Percentile Threshold Detection for path2_02 ===")
+        print("Excluding baseline period: 0-5 seconds")
         spike_params = {
             'threshold': None,
             'use_percentile': 97,  # 97th percentile
@@ -789,7 +786,8 @@ if __name__ == "__main__":
             fs=fs,
             spike_params=spike_params,
             save_results=True,
-            plot_results=True
+            plot_results=True,
+            exclude_time_range=(0, 8)  # Exclude baseline period (0-8 seconds)
         )
         total_spikes = 0
         for mode, mode_data in results.items():

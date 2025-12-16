@@ -60,45 +60,77 @@ class MovementDataSegmentor:
         with open(files[0], 'rb') as f:
             return pickle.load(f)
     
-    def load_emg_timestamps(self, dataset_path: str) -> Optional[np.ndarray]:
-        """Load EMG timestamps from multi-kernel-deconv results"""
-        for mode in ['single', 'multi']:
-            ts_path = os.path.join(dataset_path, 'multi-kernel-deconv', mode, 'emg_timestamps.npy')
-            if os.path.exists(ts_path):
-                return np.load(ts_path)
-        
-        print(f"No emg_timestamps.npy found in {dataset_path}")
-        return None
-    
     def load_eeg_data(self, dataset_path: str) -> Dict:
-        """Load EEG CSV files from EEG folder"""
+        """Load aligned EEG CSV files from EEG folder (only *_align.csv files)"""
         eeg_folder = os.path.join(dataset_path, 'EEG')
         eeg_data = {}
         
         if not os.path.exists(eeg_folder):
+            print(f"  EEG folder not found: {eeg_folder}")
             return eeg_data
         
-        for csv_file in glob.glob(os.path.join(eeg_folder, '*.csv')):
+        # Only load aligned files (created by movement_state_detector)
+        align_files = glob.glob(os.path.join(eeg_folder, '*_align.csv'))
+        
+        if not align_files:
+            print(f"  No aligned EEG files (*_align.csv) found in {eeg_folder}")
+            print(f"  Run movement_state_detector.py first to create aligned files")
+            return eeg_data
+        
+        print(f"  Found {len(align_files)} aligned EEG file(s)")
+        
+        for csv_file in align_files:
             try:
                 df = pd.read_csv(csv_file)
-                if df.shape[1] >= 2:  # At least time + 1 channel
-                    basename = os.path.splitext(os.path.basename(csv_file))[0]
-                    eeg_data[basename] = {
-                        'time': df.iloc[:, 0].values,
-                        'data': df.iloc[:, 1:].values,
-                        'channels': df.columns[1:].tolist(),
-                        'fs': self.eeg_fs
-                    }
+                
+                # Check for time column (case-insensitive): Timestamp, Time, timestamp, time
+                time_col = None
+                for col in df.columns:
+                    if col.lower() in ['timestamp', 'time']:
+                        time_col = col
+                        break
+                
+                if time_col is None:
+                    # If no time column found, create one based on sampling rate
+                    print(f"    Warning: No time column in {os.path.basename(csv_file)}, creating from sampling rate")
+                    df.insert(0, 'Timestamp', np.arange(len(df)) / self.eeg_fs)
+                    time_col = 'Timestamp'
+                
+                # Verify we have data columns beyond timestamp
+                if df.shape[1] < 2:
+                    print(f"    Warning: {os.path.basename(csv_file)} has no data columns, skipping")
+                    continue
+                
+                basename = os.path.splitext(os.path.basename(csv_file))[0]
+                
+                # Extract channel data (all columns except timestamp)
+                data_columns = [col for col in df.columns if col != time_col]
+                
+                eeg_data[basename] = {
+                    'time': df[time_col].values,  # Already starts from 0 (aligned)
+                    'data': df[data_columns].values,
+                    'channels': data_columns,
+                    'fs': self.eeg_fs
+                }
+                
+                print(f"    Loaded {basename}: {len(data_columns)} channels, {len(df)} samples, "
+                      f"time range [{df[time_col].iloc[0]:.2f}, {df[time_col].iloc[-1]:.2f}]s")
+                
             except Exception as e:
-                print(f"Error loading {csv_file}: {e}")
+                print(f"    Error loading {os.path.basename(csv_file)}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        if not eeg_data:
+            print(f"  No valid EEG data loaded from {eeg_folder}")
         
         return eeg_data
     
     def resample_cwf_to_eeg_fs(self, cwf_data: np.ndarray, emg_time: np.ndarray, 
                               target_fs: float) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Resample CWF_comp from EMG fs to EEG fs with RELATIVE time starting from 0
-        Returns resampled data with relative time coordinates
+        Resample CWF_comp from EMG fs to EEG fs (time already starts from 0)
+        Returns resampled data with time coordinates
         """
         if len(cwf_data) != len(emg_time):
             raise ValueError("CWF data length must match EMG time length")
@@ -107,94 +139,127 @@ class MovementDataSegmentor:
             raise ValueError("Need at least 2 time points for resampling")
         
         original_fs = 1.0 / np.mean(np.diff(emg_time))
-        
-        # Calculate duration from absolute time range
         duration = emg_time[-1] - emg_time[0]
         
         if abs(original_fs - target_fs) < 1:
-            # No resampling needed, just convert to relative time
-            relative_time = emg_time - emg_time[0]
-            return cwf_data, relative_time
+            # No resampling needed
+            return cwf_data, emg_time
         
-        # Create new RELATIVE time vector at target sampling rate (starting from 0)
+        # Create new time vector at target sampling rate (starting from 0)
         n_samples_new = int(duration * target_fs) + 1
         resampled_time = np.linspace(0, duration, n_samples_new)
         
-        # Interpolate CWF data using absolute time for accuracy
+        # Interpolate CWF data
         if cwf_data.ndim == 1:
             f = interp1d(emg_time, cwf_data, kind='linear', bounds_error=False, fill_value='extrapolate')
-            # Sample at absolute time points corresponding to relative time
-            abs_sample_points = resampled_time + emg_time[0]
-            resampled_cwf = f(abs_sample_points)
+            resampled_cwf = f(resampled_time)
         else:
             resampled_cwf = np.zeros((len(resampled_time), cwf_data.shape[1]))
             for i in range(cwf_data.shape[1]):
                 f = interp1d(emg_time, cwf_data[:, i], kind='linear', bounds_error=False, fill_value='extrapolate')
-                abs_sample_points = resampled_time + emg_time[0]
-                resampled_cwf[:, i] = f(abs_sample_points)
+                resampled_cwf[:, i] = f(resampled_time)
         
-        print(f"  Resampled CWF: {cwf_data.shape} -> {resampled_cwf.shape} (fs: {original_fs:.1f} -> {target_fs:.1f} Hz, relative time)")
+        print(f"  Resampled CWF: {cwf_data.shape} -> {resampled_cwf.shape} (fs: {original_fs:.1f} -> {target_fs:.1f} Hz)")
         return resampled_cwf, resampled_time
     
-    def load_npz_data(self, dataset_path: str) -> Dict:
-        """Load NPZ deconvolution results with CWF resampling"""
-        npz_data = {}
+    def load_emg_data(self, dataset_path: str) -> Dict:
+        """Load aligned EMG CSV file from EMG folder (only *_align.csv file)"""
+        emg_folder = os.path.join(dataset_path, 'EMG')
+        emg_data = None
         
-        emg_timestamps = self.load_emg_timestamps(dataset_path)
-        if emg_timestamps is None:
-            print("Warning: No EMG timestamps found, cannot resample CWF_comp")
-            return npz_data
+        if not os.path.exists(emg_folder):
+            return None
+        
+        # Load aligned EMG file (created by movement_state_detector)
+        align_files = glob.glob(os.path.join(emg_folder, '*_align.csv'))
+        if not align_files:
+            print(f"No aligned EMG file found in {emg_folder}")
+            return None
+        
+        try:
+            df = pd.read_csv(align_files[0])
+            # Aligned files have Timestamp column and channel columns
+            if 'Timestamp' in df.columns:
+                emg_data = {
+                    'time': df['Timestamp'].values,  # Already starts from 0
+                    'data': df.drop(columns=['Timestamp']).values,
+                    'channels': [col for col in df.columns if col != 'Timestamp'],
+                    'fs': self.emg_fs
+                }
+        except Exception as e:
+            print(f"Error loading aligned EMG file: {e}")
+        
+        return emg_data
+    
+    def load_pickle_data(self, dataset_path: str) -> Dict:
+        """Load pickle deconvolution results from EMG_to_MUAP.py output"""
+        pickle_data = {}
+        
+        # Load aligned EMG data to get time vector
+        emg_data = self.load_emg_data(dataset_path)
+        if emg_data is None:
+            print("Warning: No aligned EMG data found, cannot load deconvolution results")
+            return pickle_data
+        
+        emg_time = emg_data['time']  # Already starts from 0
         
         for mode in ['single', 'multi']:
             mode_dir = os.path.join(dataset_path, 'multi-kernel-deconv', mode)
             if not os.path.exists(mode_dir):
                 continue
                 
-            pattern = os.path.join(mode_dir, 'multi_kernel_deconv_results_*.npz')
-            npz_files = glob.glob(pattern)
-            if not npz_files:
+            pattern = os.path.join(mode_dir, f'results_{mode}_*.pkl')
+            pkl_files = glob.glob(pattern)
+            if not pkl_files:
                 continue
             
-            npz_file = sorted(npz_files)[-1]
+            pkl_file = sorted(pkl_files)[-1]
             try:
-                with np.load(npz_file, allow_pickle=True) as data:
-                    mode_data = {}
+                with open(pkl_file, 'rb') as f:
+                    deconv_results = pickle.load(f)
+                
+                if not deconv_results:
+                    print(f"    {mode} mode: no results in pickle file")
+                    continue
+                
+                mode_data = {}
+                channel_labels = ['LGA', 'RGA', 'LTA', 'RTA', 'LBF', 'RBF', 'LRF', 'RRF']
+                
+                for ch_idx, ch_result in enumerate(deconv_results):
+                    if ch_idx >= len(channel_labels):
+                        break
                     
-                    channel_labels = ['LGA', 'RGA', 'LTA', 'RTA', 'LBF', 'RBF', 'LRF', 'RRF']
+                    ch_label = channel_labels[ch_idx]
                     
-                    for ch_label in channel_labels:
-                        ch_data = {}
-                        
-                        # Only load and resample CWF_comp (remove firing pattern)
-                        cwf_comp_key = f'{ch_label}_CWF_comp'
-                        if cwf_comp_key in data:
-                            cwf_comp_raw = data[cwf_comp_key]
-                            
-                            try:
-                                cwf_comp_resampled, cwf_time_resampled = self.resample_cwf_to_eeg_fs(
-                                    cwf_comp_raw, emg_timestamps, self.eeg_fs
-                                )
-                                
-                                ch_data['CWF_comp'] = cwf_comp_resampled
-                                ch_data['CWF_comp_time'] = cwf_time_resampled
-                                ch_data['CWF_comp_fs'] = self.eeg_fs
-                                
-                                print(f"  Resampled {ch_label} CWF_comp: {cwf_comp_raw.shape} -> {cwf_comp_resampled.shape}")
-                            except Exception as e:
-                                print(f"  Error resampling {ch_label} CWF_comp: {e}")
-                                ch_data['CWF_comp'] = cwf_comp_raw
-                                ch_data['CWF_comp_time'] = emg_timestamps
-                                ch_data['CWF_comp_fs'] = self.emg_fs
-                        
-                        if ch_data:
-                            mode_data[ch_label] = ch_data
+                    # Resample CWF_comp to EEG sampling rate
+                    cwf_comp = ch_result['CWF_comp']  # shape (N, n_kernels)
+                    resampled_cwf, resampled_time = self.resample_cwf_to_eeg_fs(
+                        cwf_comp, emg_time, self.eeg_fs
+                    )
                     
-                    npz_data[mode] = mode_data
+                    ch_data = {
+                        'kernel': ch_result['K'],
+                        'firing_pattern': ch_result['X'],
+                        'CWF': ch_result['CWF'],
+                        'CWF_comp': resampled_cwf,  # Resampled to EEG fs
+                        'CWF_comp_time': resampled_time,  # Time vector for resampled CWF
+                        'recon_total': ch_result['recon_total'],
+                        'recon_components': ch_result['recon_components']
+                    }
+                    
+                    mode_data[ch_label] = ch_data
+                    print(f"    {ch_label}: CWF_comp resampled to {resampled_cwf.shape}")
+                
+                if mode_data:
+                    pickle_data[mode] = mode_data
+                    print(f"    {mode} mode: loaded {len(mode_data)} channels")
                     
             except Exception as e:
-                print(f"Error loading {npz_file}: {e}")
+                print(f"Error loading {pkl_file}: {e}")
+                import traceback
+                traceback.print_exc()
         
-        return npz_data
+        return pickle_data
     
     def find_time_indices(self, target_start: float, target_end: float, 
                          time_array: np.ndarray) -> np.ndarray:
@@ -329,13 +394,13 @@ class MovementDataSegmentor:
         
         return segments
     
-    def segment_spike_data(self, spike_data: Dict, emg_timestamps: np.ndarray,
+    def segment_spike_data(self, spike_data: Dict, emg_time: np.ndarray,
                           movement_results: Dict) -> Dict:
         """Segment spike data according to movement states using unified approach"""
         spike_segments = {}
         
-        emg_start_time = emg_timestamps[0] if len(emg_timestamps) > 0 else 0.0
-        absolute_times = self.get_absolute_movement_times(movement_results, emg_start_time)
+        # EMG time already starts from 0 (aligned)
+        absolute_times = self.get_absolute_movement_times(movement_results, 0.0)
         
         for mode, mode_data in spike_data.items():
             mode_segments = {}
@@ -349,8 +414,8 @@ class MovementDataSegmentor:
                     if len(spike_times_relative) == 0:
                         continue
                     
-                    # Convert to absolute time
-                    spike_times_absolute = spike_times_relative + emg_start_time
+                    # Spike times are already in absolute time (starting from 0) since EMG is aligned
+                    spike_times_absolute = spike_times_relative
                     
                     comp_segments = {}
                     for state in self.states:
@@ -514,14 +579,9 @@ class MovementDataSegmentor:
         if movement_results is None:
             return {'error': 'No movement results found'}
         
-        # Load EMG timestamps
-        emg_timestamps = self.load_emg_timestamps(dataset_path)
-        if emg_timestamps is None:
-            print("Warning: No EMG timestamps found")
-            return {'error': 'No EMG timestamps found'}
-        
-        emg_start_time = emg_timestamps[0]
-        print(f"EMG start time: {emg_start_time:.3f}s")
+        # All aligned data (EEG, EMG, TRC) start from time 0
+        # No need to load timestamps separately
+        print(f"All data already aligned (starts from 0) by movement_state_detector")
         
         # Load spike data
         spike_data = self.load_spike_data(dataset_path)
@@ -529,7 +589,7 @@ class MovementDataSegmentor:
         result = {
             'dataset_name': dataset_name,
             'movement_states': movement_results,
-            'emg_start_time': emg_start_time,
+            'data_start_time': 0.0,  # All aligned data starts from 0
             'eeg_segments': {},
             'emg_segments': {},
             'spike_segments': {},
@@ -547,10 +607,10 @@ class MovementDataSegmentor:
         eeg_data = self.load_eeg_data(dataset_path)
         for eeg_name, eeg_info in eeg_data.items():
             print(f"Segmenting EEG: {eeg_name}")
-            eeg_start_time = eeg_info['time'][0]
+            # EEG time already starts from 0 (aligned)
             eeg_segments = self.segment_temporal_data(
                 eeg_info['data'], eeg_info['time'], movement_results, 
-                eeg_start_time, f"EEG-{eeg_name}", eeg_info['fs']
+                0.0, f"EEG-{eeg_name}", eeg_info['fs']  # data_start_time = 0
             )
             
             # Add EEG-specific metadata
@@ -560,9 +620,9 @@ class MovementDataSegmentor:
             
             result['eeg_segments'][eeg_name] = eeg_segments
         
-        # Segment EMG data using unified function
-        npz_data = self.load_npz_data(dataset_path)
-        for mode, mode_data in npz_data.items():
+        # Segment EMG/CWF data using unified function
+        pickle_data = self.load_pickle_data(dataset_path)
+        for mode, mode_data in pickle_data.items():
             print(f"Segmenting EMG mode: {mode}")
             mode_segments = {}
             
@@ -579,7 +639,7 @@ class MovementDataSegmentor:
                     
                     segments = self.segment_temporal_data(
                         cwf_comp_data, cwf_comp_time, movement_results, 
-                        emg_start_time, f"CWF_comp-{ch_label}-{mode}", self.eeg_fs
+                        0.0, f"CWF_comp-{ch_label}-{mode}", self.eeg_fs  # data_start_time = 0
                     )
                     
                     # Add EMG-specific metadata
@@ -598,10 +658,15 @@ class MovementDataSegmentor:
         # Segment spike data using specialized function
         if spike_data:
             print("Segmenting spike data")
-            spike_segments = self.segment_spike_data(
-                spike_data, emg_timestamps, movement_results
-            )
-            result['spike_segments'] = spike_segments
+            # Load aligned EMG data to get time vector
+            emg_data = self.load_emg_data(dataset_path)
+            if emg_data is not None:
+                spike_segments = self.segment_spike_data(
+                    spike_data, emg_data['time'], movement_results
+                )
+                result['spike_segments'] = spike_segments
+            else:
+                print("Warning: Cannot segment spike data without aligned EMG time vector")
         
         # Validate time consistency across all modalities
         validation_results = self.validate_segment_time_consistency(result)

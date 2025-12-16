@@ -34,13 +34,20 @@ from datetime import datetime
 import warnings
 
 class CoherenceAnalyzer:
+    """Coherence analysis for EEG-CWF correlation
+    
+    Optimized for RELATIVE time coordinates (0-based) from neural_data_movement_segmentor:
+    - EEG and CWF signals within each segment share the same timebase (both start from 0)
+    - Time alignment is typically automatic (minimal or no interpolation needed)
+    - CWF is pre-resampled to EEG sampling rate (500Hz) in segmentation pipeline
+    """
     
     def __init__(self, eeg_fs: float = 500.0, emg_fs: float = 1000.0):
         self.eeg_fs = eeg_fs
         self.emg_fs = emg_fs
         
         self.motor_freq_bands = {
-            'delta': (1, 4), 'theta': (4, 8), 'mu': (8, 12),
+            'delta': (1, 4), 'theta': (4, 8), 'alpha': (8, 12),
             'beta': (12, 30), 'low_gamma': (30, 46)
         }
         
@@ -59,12 +66,12 @@ class CoherenceAnalyzer:
         self.nfft = 512
         self.freq_max = 50.0
         
-        self.motor_band_order = ['delta', 'theta', 'mu', 'beta', 'low_gamma']
+        self.motor_band_order = ['delta', 'theta', 'alpha', 'beta', 'low_gamma']
         self.visual_band_order = ['delta', 'theta', 'alpha', 'beta', 'low_gamma']
         
         self.band_colors = {
-            'delta': '#1f77b4', 'theta': '#ff7f0e', 'mu': '#2ca02c',
-            'alpha': '#2ca02c', 'beta': '#d62728', 'low_gamma': '#9467bd'
+            'delta': '#1f77b4', 'theta': '#ff7f0e', 'alpha': '#2ca02c',
+            'beta': '#d62728', 'low_gamma': '#9467bd'
         }
     
     def _get_freq_bands_for_channel(self, channel_name: str) -> Dict[str, Tuple[float, float]]:
@@ -75,42 +82,88 @@ class CoherenceAnalyzer:
     
     def align_and_truncate(self, eeg_time: np.ndarray, cwf_time: np.ndarray,
                           eeg_signal: np.ndarray, cwf_signal: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Align and truncate EEG and CWF signals to common timebase
+        
+        With RELATIVE time coordinates (0-based) from neural_data_movement_segmentor:
+        - Both EEG and CWF time vectors start from 0 for the same movement segment
+        - CWF is pre-resampled to EEG fs (500Hz) in the segmentation pipeline
+        - Time alignment should be automatic in most cases (fast path)
+        - Fallback to interpolation only if needed (rare)
+        
+        Args:
+            eeg_time: EEG time vector (relative coordinates, 0-based)
+            cwf_time: CWF time vector (relative coordinates, 0-based)
+            eeg_signal: EEG signal array (1D)
+            cwf_signal: CWF signal array (1D)
+            
+        Returns:
+            (aligned_eeg, aligned_cwf, common_time)
+        """
         if eeg_signal.ndim > 1 or cwf_signal.ndim > 1:
             raise ValueError(f"Signals must be 1D, got EEG: {eeg_signal.shape}, CWF: {cwf_signal.shape}")
         
+        # Verify relative time coordinates (should start from ~0)
+        if abs(eeg_time[0]) > 0.01 or abs(cwf_time[0]) > 0.01:
+            print(f"      Warning: Time vectors do not start from 0 (EEG: {eeg_time[0]:.3f}s, CWF: {cwf_time[0]:.3f}s)")
+            print(f"      Expected relative coordinates. Data may use absolute time.")
+        
+        # Fast path: Time vectors are identical (common case with relative coordinates)
         if len(eeg_time) == len(cwf_time) and np.allclose(eeg_time, cwf_time, rtol=1e-6, atol=1e-9):
             if len(eeg_signal) == len(eeg_time) and len(cwf_signal) == len(cwf_time):
-                print(f"      Aligned: {len(eeg_time)} samples, duration={eeg_time[-1]:.3f}s")
+                print(f"      ✓ Perfect alignment: {len(eeg_time)} samples, duration={eeg_time[-1]:.3f}s (relative coords)")
                 return eeg_signal, cwf_signal, eeg_time
+            
+            # Length mismatch, truncate to minimum
             min_len = min(len(eeg_time), len(eeg_signal), len(cwf_signal))
-            print(f"      Truncating to {min_len} samples")
+            print(f"      ✓ Time vectors aligned, truncating signals to {min_len} samples")
             return eeg_signal[:min_len], cwf_signal[:min_len], eeg_time[:min_len]
         
-        print(f"      Warning: Time mismatch - EEG: {len(eeg_time)}, CWF: {len(cwf_time)}")
+        # Slow path: Time vectors differ (should be rare with relative coordinates)
+        print(f"      ⚠ Time vector mismatch detected - falling back to interpolation")
+        print(f"        EEG: {len(eeg_time)} samples, [{eeg_time[0]:.3f}, {eeg_time[-1]:.3f}]s")
+        print(f"        CWF: {len(cwf_time)} samples, [{cwf_time[0]:.3f}, {cwf_time[-1]:.3f}]s")
+        
+        # Find common time range
         time_start = max(eeg_time[0], cwf_time[0])
         time_end = min(eeg_time[-1], cwf_time[-1])
         
         if time_end <= time_start:
-            raise ValueError(f"No overlap: EEG=[{eeg_time[0]:.3f}, {eeg_time[-1]:.3f}], CWF=[{cwf_time[0]:.3f}, {cwf_time[-1]:.3f}]")
+            raise ValueError(f"No temporal overlap: EEG=[{eeg_time[0]:.3f}, {eeg_time[-1]:.3f}], "
+                           f"CWF=[{cwf_time[0]:.3f}, {cwf_time[-1]:.3f}]")
         
+        # Extract overlapping regions
         eeg_mask = (eeg_time >= time_start) & (eeg_time <= time_end)
         cwf_mask = (cwf_time >= time_start) & (cwf_time <= time_end)
         eeg_aligned = eeg_signal[eeg_mask]
         eeg_time_aligned = eeg_time[eeg_mask]
         
         if len(eeg_time_aligned) == 0:
-            raise ValueError(f"No EEG samples in overlap [{time_start:.3f}, {time_end:.3f}]")
+            raise ValueError(f"No EEG samples in overlap [{time_start:.3f}, {time_end:.3f}]s")
         
+        # Check if CWF time matches after masking
         cwf_time_overlap = cwf_time[cwf_mask]
         if len(eeg_time_aligned) == len(cwf_time_overlap) and np.allclose(eeg_time_aligned, cwf_time_overlap, rtol=1e-6):
             cwf_aligned = cwf_signal[cwf_mask]
+            print(f"        ✓ Aligned via masking: {len(eeg_time_aligned)} samples")
         else:
+            # Interpolate CWF to EEG time points
+            print(f"        Interpolating CWF to EEG timebase...")
             f_interp = interp1d(cwf_time, cwf_signal, kind='linear', bounds_error=False, fill_value='extrapolate')
             cwf_aligned = f_interp(eeg_time_aligned)
+            
+            # Handle any NaN values from interpolation
             if np.any(np.isnan(cwf_aligned)):
+                n_nan = np.sum(np.isnan(cwf_aligned))
+                print(f"        Warning: {n_nan} NaN values after interpolation, replacing with 0")
                 cwf_aligned = np.nan_to_num(cwf_aligned, nan=0.0)
+            
+            print(f"        ✓ Interpolation complete: {len(cwf_aligned)} samples")
         
+        # Final length check
         min_len = min(len(eeg_aligned), len(cwf_aligned))
+        if min_len < len(eeg_aligned):
+            print(f"        Final truncation to {min_len} samples")
+        
         return eeg_aligned[:min_len], cwf_aligned[:min_len], eeg_time_aligned[:min_len]  
     
     def compute_coherence(self, signal1: np.ndarray, signal2: np.ndarray, fs: float) -> Tuple[np.ndarray, np.ndarray]:
@@ -156,6 +209,13 @@ class CoherenceAnalyzer:
                     eeg_time: np.ndarray, cwf_time: np.ndarray,
                     eeg_channel: str, cwf_label: str, comp_idx: int,
                     movement_state: str) -> Dict[str, Any]:
+        """Analyze coherence between EEG channel and CWF component
+        
+        With relative time coordinates:
+        - Time alignment is typically automatic (both start from 0)
+        - CWF pre-resampled to EEG fs in segmentation pipeline
+        - Minimal processing overhead compared to absolute time coordinates
+        """
         try:
             eeg_aligned, cwf_aligned, common_time = self.align_and_truncate(
                 eeg_time, cwf_time, eeg_signal, cwf_signal
@@ -356,7 +416,7 @@ class CoherenceAnalyzer:
     def compute_summary_statistics(self, results: Dict) -> Dict[str, Any]:
         summary = {'band_statistics': {}}
         
-        for band_name in ['delta', 'theta', 'mu', 'alpha', 'beta', 'low_gamma']:
+        for band_name in ['delta', 'theta', 'alpha', 'beta', 'low_gamma']:
             summary['band_statistics'][band_name] = {'coherence_values': []}
         
         for state_name, state_data in results.get('movement_states', {}).items():
@@ -712,7 +772,7 @@ class CoherenceAnalyzer:
                         grid_z[mask] = np.nan
                         
                         im = ax.contourf(grid_x, grid_y, grid_z, levels=100, 
-                                       cmap='RdBu_r', norm=norm, alpha=0.95, extend='max')
+                                       cmap='viridis', norm=norm, alpha=0.95)
                         
                         for x, y, label in zip(x_coords, y_coords, labels):
                             if label in self.motor_channels or label in self.visual_channels:
@@ -735,8 +795,13 @@ class CoherenceAnalyzer:
                 plt.tight_layout(rect=[0, 0, 0.93, 0.95])
                 
                 # Add single colorbar for entire figure (after tight_layout)
+                # Create colorbar using ScalarMappable to ensure consistent color range
+                from matplotlib.cm import ScalarMappable
+                sm = ScalarMappable(cmap='viridis', norm=norm)
+                sm.set_array([])  # Required for ScalarMappable
+                
                 cbar_ax = fig.add_axes([0.94, 0.15, 0.015, 0.7])
-                cbar = fig.colorbar(im, cax=cbar_ax)
+                cbar = fig.colorbar(sm, cax=cbar_ax, extend='max')
                 cbar.set_label('Coherence', fontsize=11, fontweight='bold')
                 cbar.ax.tick_params(labelsize=9)
                 

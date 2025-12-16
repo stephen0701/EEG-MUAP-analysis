@@ -350,7 +350,7 @@ classdef EEGPreprocessor
 
                         % Create table with channel names and prepend Time column
                         T = array2table(Z, 'VariableNames', matlab.lang.makeValidName(chNames));
-                        T = addvars(T, t, 'Before', 1, 'NewVariableNames', 'Time'); % put time first
+                        T = addvars(T, t, 'Before', 1, 'NewVariableNames', 'Timestamp'); % put time first
 
                         zfile = fullfile(out_folder, sprintf('%s_zscore.csv', baseName));
                         try
