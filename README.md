@@ -1,2 +1,2 @@
 # EEG-MUAP-analysis
-<img width="2164" height="830" alt="image" src="https://github.com/user-attachments/assets/252e232d-a43c-4913-93d0-251a7fd59ea6" />
+<img width="2758" height="1059" alt="image" src="https://github.com/user-attachments/assets/f47f7ee0-161b-4356-8633-3efeaf345a14" />
