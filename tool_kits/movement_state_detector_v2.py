@@ -721,7 +721,7 @@ class IntegratedMovementStateSegmentor:
 
 
 def main():
-    base_path = '/home/stephen/independent_study/Data/2025_0617_0620/Subject5'
+    base_path = os.environ["RESEARCH_DATA_ROOT"]
     
     segmentor = IntegratedMovementStateSegmentor(fs=30)
     

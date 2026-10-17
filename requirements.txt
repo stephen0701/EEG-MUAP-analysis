@@ -1,0 +1,6 @@
+# Versions used for portfolio software checks; original experiment versions are unknown.
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.6
+matplotlib==3.11.2
+seaborn==0.13.2

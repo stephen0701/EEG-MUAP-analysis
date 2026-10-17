@@ -5,6 +5,7 @@
 classdef EEGPreprocessor
     % EEGPreprocessor: Batch reading, aligning, preprocessing, and visualizing EEG data in MATLAB
     properties
+        channel_location_file = ''; % Set to the approved 32-channel .ced file
         folder_path          % Directory containing EEG CSV files
         files                % List of EEG CSV files matching EEG_path2_*.csv
         EEG_data             % Struct array storing raw and processed data for each file
@@ -22,6 +23,7 @@ classdef EEGPreprocessor
         function obj = EEGPreprocessor(folder_path)
             % Constructor: initialize file list, channel info, and preallocate data struct
             obj.folder_path = folder_path;
+            obj.channel_location_file = getenv('RESEARCH_CHANNEL_LOCATIONS');
             % Gather all CSV files matching the naming pattern
             % ----- please change the filename of your .csv; ex:EMG_path2_*.csv ----- 
             obj.files = dir(fullfile(folder_path, 'EEG_path2_*.csv'));
@@ -115,8 +117,10 @@ classdef EEGPreprocessor
                     eegData = data'; % channels × samples
                     EEG = pop_importdata('dataformat','array','nbchan',0, ...
                                         'data', eegData, 'srate', obj.fs, 'pnts',0, 'xmin',0);
-                    %   b) Load channel locations file
-                    EEG = pop_chanedit(EEG, 'load', {'C:/Users/USER/Desktop/大學專題/EEG/channel_loc/ch32.ced','filetype','autodetect'});
+                    %   b) Load the actual acquisition montage; do not substitute one.
+                    assert(isfile(obj.channel_location_file), ...
+                        'Set RESEARCH_CHANNEL_LOCATIONS or eeg.channel_location_file to the .ced file.');
+                    EEG = pop_chanedit(EEG, 'load', {obj.channel_location_file,'filetype','autodetect'});
 
                     %   c) Calibrate ASR on first 10 seconds
                     base_pnts = min(10*obj.fs, size(EEG.data,2));
@@ -287,7 +291,7 @@ classdef EEGPreprocessor
             % as separate CSV files.
             %
             % Usage:
-            %   eeg = eeg.save_zscore_time('C:\Users\USER\Desktop\output');
+            %   eeg = eeg.save_zscore_time(getenv('RESEARCH_EEG_OUTPUT'));
             %
             % Parameters:
             %   out_folder - (string) Output directory. If omitted, obj.folder_path is used.

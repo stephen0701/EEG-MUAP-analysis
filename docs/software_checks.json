@@ -1,0 +1,48 @@
+{
+  "checks": [
+    {
+      "name": "Python syntax, imports, and analysis AST preservation",
+      "status": "pass",
+      "detail": "All 9 modules imported; 41 top-level analysis functions/classes identical to baseline. Example main/path setup excluded."
+    },
+    {
+      "name": "Kernel construction",
+      "status": "pass",
+      "detail": "51 samples, two opposite-polarity kernels, zero-sum derivative shape."
+    },
+    {
+      "name": "Spike ISI suppression",
+      "status": "pass",
+      "detail": "Stronger competing peak retained; accepted spike times meet 30 ms ISI on synthetic input."
+    },
+    {
+      "name": "Coherence convention",
+      "status": "pass",
+      "detail": "Output equals sqrt(SciPy MSC) on seeded synthetic noise."
+    },
+    {
+      "name": "PPC convention and STA limitation",
+      "status": "pass",
+      "detail": "Locked phases yield 1; negative finite-sample PPC is clipped to zero. Physical \u00b10.15 s and display \u00b10.3 s axes differ as documented."
+    },
+    {
+      "name": "Deconvolution smoke",
+      "status": "pass",
+      "detail": "One IRLS iteration on 512 seeded synthetic samples produced two finite components; no motor-unit recovery claim."
+    },
+    {
+      "name": "Local documentation links and source path scan",
+      "status": "pass",
+      "detail": "All relative Markdown targets exist; no original Windows/Linux machine paths remain in source."
+    }
+  ],
+  "versions": {
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "pandas": "3.0.6",
+    "matplotlib": "3.11.2",
+    "seaborn": "0.13.2"
+  },
+  "baseline_commit": "fa3cdf80bb3241b01c5778b77c93d498a71f3ffa",
+  "scope": "Synthetic software checks only; no participant data or report reproduction"
+}

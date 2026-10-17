@@ -1,36 +1,52 @@
-# === Python 核心忽略清單 ===
+# Local environments, editor settings, and caches
 __pycache__/
 *.py[cod]
-*.so
-.ipynb_checkpoints/
-
-# === 虛擬環境 (Virtual Environment) ===
-.env
-.venv
-env/
+.venv/
 venv/
+env/
+.env
+.env.*
 *.egg-info/
-
-# === VSCode 設定檔 (可選，建議忽略個人設定) ===
+.ipynb_checkpoints/
 .vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.asv
 
-# === 數據檔案 (Data Files) - 避免上傳過大檔案 ===
-# 這些是生醫工程常見的數據格式，GitHub 傳不上去且不該公開
+# Private recordings, metadata, motion data, and analysis products
+data/
+private-data/
+results/
+outputs/
 *.csv
+*.tsv
 *.xlsx
 *.xls
 *.mat
 *.h5
-*.pth
+*.hdf5
 *.pkl
+*.pickle
+*.npy
+*.npz
 *.bdf
 *.edf
 *.set
 *.fdt
 *.nii
 *.nii.gz
-
-# === 系統暫存檔 ===
-Thumbs.db
-Desktop.ini
-.DS_Store
+*.trc
+*.mot
+*.c3d
+*.mp4
+*.avi
+*.mov
+*.pth
+multi-kernel-deconv/
+firing_pattern_to_spikes/
+movement_analysis/
+neural_movement_segmentation/
+coherence_analysis/
+correlation_analysis/
