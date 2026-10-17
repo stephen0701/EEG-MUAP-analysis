@@ -967,7 +967,7 @@ def main():
     Main execution function - example usage
     """
     # Set paths - please modify according to your actual situation
-    base_path = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'  # Data root directory
+    base_path = os.environ["RESEARCH_DATA_ROOT"]  # Data root directory
     
     # Create integrated segmentor
     segmentor = IntegratedMovementStateSegmentor(fs=30)

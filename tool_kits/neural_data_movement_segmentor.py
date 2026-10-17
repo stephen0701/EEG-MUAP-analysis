@@ -1212,7 +1212,7 @@ def segment_all_datasets(base_path: str):
 
 
 if __name__ == "__main__":
-    BASE_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
+    BASE_PATH = os.environ["RESEARCH_DATA_ROOT"]
     
     print("=== Optimized Movement Data Segmentation ===")
     print("- Unified temporal data segmentation for EEG/EMG")

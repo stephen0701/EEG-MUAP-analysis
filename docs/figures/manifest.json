@@ -1,0 +1,62 @@
+[
+  {
+    "source": "fig_6_2.jpeg",
+    "sha256": "a98a39465baca39e0241b9bb2ea0f751de088e62b287c762ca9b855fad506c59",
+    "size": [
+      747,
+      576
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "file": "spike_detection.jpeg",
+    "permission": "owner-authorized private portfolio inclusion"
+  },
+  {
+    "source": "fig_6_4a.jpeg",
+    "sha256": "c85303a5142897cca7f0186cc1030aba13922fe06692623a93bc2283c3308adc",
+    "size": [
+      1350,
+      389
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "file": "ppc_single_model.jpeg",
+    "permission": "owner-authorized private portfolio inclusion"
+  },
+  {
+    "source": "fig_6_4b.jpeg",
+    "sha256": "396c2dc6da6ffe09b1fcea4cfac93a064f48b2541ae6442771f6bd2e1952e777",
+    "size": [
+      1350,
+      573
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "file": "ppc_multi_model.jpeg",
+    "permission": "owner-authorized private portfolio inclusion"
+  }
+]

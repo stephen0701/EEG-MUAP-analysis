@@ -908,7 +908,7 @@ def analyze_all_datasets_correlations(base_path: str, dataset_prefix: str = 'pat
 # Example Usage
 
 if __name__ == "__main__":
-    BASE_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
+    BASE_PATH = os.environ["RESEARCH_DATA_ROOT"]
     
     single_dataset = os.path.join(BASE_PATH, 'path2_02')
     if os.path.exists(single_dataset):

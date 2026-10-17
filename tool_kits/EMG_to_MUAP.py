@@ -773,13 +773,13 @@ def main():
     
     1. Process single dataset:
        python EMG_to_MUAP.py
-       (modify DATASET_PATH in code)
+       (set the RESEARCH_DATASET environment variable)
        
     2. Process all datasets in parent directory:
        Uncomment process_all_datasets() call
     """
-    # Process only path2_02 dataset
-    DATASET_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225/path2_02'
+    # Process the explicitly configured, authorized trial folder.
+    DATASET_PATH = os.environ["RESEARCH_DATASET"]
     
     print(f"Processing single dataset: {DATASET_PATH}")
     results = process_single_dataset(
@@ -799,7 +799,7 @@ def main():
         print(f"    - Channels: {info['n_channels']}")
     
     # To process all datasets, uncomment below:
-    # PARENT_DIR = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
+    # PARENT_DIR = os.environ["RESEARCH_DATA_ROOT"]
     # master_results = process_all_datasets(
     #     parent_dir=PARENT_DIR,
     #     muscles=['LGA','RGA','LTA','RTA','LBF','RBF','LRF','RRF'],

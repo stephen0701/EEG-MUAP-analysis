@@ -765,14 +765,14 @@ def process_all_datasets_spikes(base_path: str,
 # ---------------------- Real Data Processing ----------------------
 if __name__ == "__main__":
     # Configuration matching your setup
-    base_path = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225/'
+    base_path = os.environ["RESEARCH_DATA_ROOT"]
     fs = 1000.0  # Sampling rate in Hz
 
     # Test with path2_02 using percentile threshold
     test_dataset = os.path.join(base_path, 'path2_02')
     if os.path.exists(test_dataset):
         print("\n=== Percentile Threshold Detection for path2_02 ===")
-        print("Excluding baseline period: 0-5 seconds")
+        print("Excluding baseline period: 0-8 seconds")
         spike_params = {
             'threshold': None,
             'use_percentile': 97,  # 97th percentile

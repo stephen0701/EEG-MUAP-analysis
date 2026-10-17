@@ -3,7 +3,8 @@
 %% Example Usage of EEGPreprocessor
 
 % Specify the folder containing your raw EEG CSV files
-folder_path = "C:\\Users\\USER\\Desktop\\大學專題\\data\\20241225\\path2";
+folder_path = getenv('RESEARCH_EEG_INPUT');
+assert(isfolder(folder_path), 'Set RESEARCH_EEG_INPUT to your approved EEG CSV folder.');
 
 % -------------------------------------------------------------------------
 % STEP 1: Initialize the EEGPreprocessor object
@@ -43,7 +44,7 @@ eeg = eeg.export_ASR_for_ICA();
 %% --- After completing ICA manually in EEGLAB ---
 
 % Place all your EEGLAB .set files in this folder:
-set_folder = 'C:\Users\USER\Desktop\大學專題\data\20241225\ICA(path2)';
+set_folder = getenv('RESEARCH_ICA_DIR');
 
 % -------------------------------------------------------------------------
 % STEP 5: Import ICA results back into the EEGPreprocessor object
@@ -56,7 +57,7 @@ eeg = eeg.import_ICA_results(set_folder);
 %   Outputs a time×channels matrix stored in eeg.EEG_data(i).zcore
 % -------------------------------------------------------------------------
 eeg = eeg.zscore();
-eeg = eeg.save_zscore_time('C:\Users\USER\Desktop\大學專題\data\20241225\eeg_zscore_time');
+eeg = eeg.save_zscore_time(getenv('RESEARCH_EEG_OUTPUT'));
 % -------------------------------------------------------------------------
 % STEP 7: Final visual checks
 %   - Plot the ICA-reconstructed time series of file #1
@@ -64,3 +65,4 @@ eeg = eeg.save_zscore_time('C:\Users\USER\Desktop\大學專題\data\20241225\eeg
 % -------------------------------------------------------------------------
 eeg.plot_check('ica', 1);       % time×channels plot after ICA
 eeg.plot_check('zscore', 5);     % time×channels plot after Z-scoring
+

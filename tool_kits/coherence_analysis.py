@@ -173,17 +173,8 @@ class CoherenceAnalyzer:
                                             noverlap=self.noverlap,
                                             nfft=self.nfft)
 
-        # Rationale for using Coherence Magnitude instead of MSC:
-        # 1. Interpretability: Cxy is analogous to Pearson correlation coefficient (r),
-        #    while MSC is analogous to coefficient of determination (r²)
-        # 2. Value comparison: Cxy provides more intuitive comparison between conditions
-        #    Example: MSC = 0.64 → Cxy = 0.8 (easier to interpret as "80% correlation")
-        # 3. Literature consistency: Our reference literature ("Corticomuscular coherence 
-        #    existed at the single motor unit level") reports coherence magnitude
-        # 4. Mathematical equivalence: Both metrics are valid and monotonically related
-        #    (Cxy = √MSC), preserving relative differences
-
-        # Convert MSC (Cxy²) to Coherence Magnitude (Cxy) by taking square root 
+        # Retain the original coherence-magnitude convention: sqrt(MSC).
+        # This is not a percentage correlation or a significance test.
         Cxy = np.sqrt(Cxy_squared)
     
         freq_mask = freqs <= self.freq_max
@@ -970,7 +961,7 @@ if __name__ == "__main__":
     import glob
     
     # Set base path to your data directory
-    BASE_PATH = '/home/ntk/exo/ExoPulse/simulation/mocap_EMG_EEG_data/20241225'
+    BASE_PATH = os.environ["RESEARCH_DATA_ROOT"]
     
     # Example 1: Process single dataset
     single_dataset = os.path.join(BASE_PATH, 'path2_02')
@@ -1000,3 +991,4 @@ if __name__ == "__main__":
     # print("\n✓ All datasets coherence analysis completed!")
 
 # %%
+
