@@ -1,6 +1,49 @@
 [
   {
+    "source": "fig_6_1a.jpeg",
+    "file": "kernel_single_model.jpeg",
+    "sha256": "ed3be8fe851979dd7d5f550a6e54aa14a1812470e9ae6c2375c5b8a7133d687d",
+    "size": [
+      617,
+      713
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
+  },
+  {
+    "source": "fig_6_1b.jpeg",
+    "file": "kernel_multi_model.jpeg",
+    "sha256": "4e1e9fc52def649ec4e65fc2f3d14885dd825dbad40b5a45f343f5eba71cf7e4",
+    "size": [
+      851,
+      643
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
+  },
+  {
     "source": "fig_6_2.jpeg",
+    "file": "spike_detection.jpeg",
     "sha256": "a98a39465baca39e0241b9bb2ea0f751de088e62b287c762ca9b855fad506c59",
     "size": [
       747,
@@ -16,11 +59,54 @@
       "progressive",
       "progression"
     ],
-    "file": "spike_detection.jpeg",
-    "permission": "owner-authorized private portfolio inclusion"
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
+  },
+  {
+    "source": "fig_6_3a.jpeg",
+    "file": "sta_single_model.jpeg",
+    "sha256": "d12db6592058ac4effdbecd08381923e14d0c14bffa61aa1a5f210aa76dca241",
+    "size": [
+      1685,
+      781
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
+  },
+  {
+    "source": "fig_6_3b.jpeg",
+    "file": "sta_multi_model.jpeg",
+    "sha256": "059160d275fcea5488e834986aa345603269ed04cbadd8d617d72b04504096b9",
+    "size": [
+      1688,
+      939
+    ],
+    "exif_fields": 0,
+    "metadata_keys": [
+      "jfif",
+      "jfif_version",
+      "dpi",
+      "jfif_unit",
+      "jfif_density",
+      "progressive",
+      "progression"
+    ],
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
   },
   {
     "source": "fig_6_4a.jpeg",
+    "file": "ppc_single_model.jpeg",
     "sha256": "c85303a5142897cca7f0186cc1030aba13922fe06692623a93bc2283c3308adc",
     "size": [
       1350,
@@ -36,11 +122,12 @@
       "progressive",
       "progression"
     ],
-    "file": "ppc_single_model.jpeg",
-    "permission": "owner-authorized private portfolio inclusion"
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
   },
   {
     "source": "fig_6_4b.jpeg",
+    "file": "ppc_multi_model.jpeg",
     "sha256": "396c2dc6da6ffe09b1fcea4cfac93a064f48b2541ae6442771f6bd2e1952e777",
     "size": [
       1350,
@@ -56,7 +143,7 @@
       "progressive",
       "progression"
     ],
-    "file": "ppc_multi_model.jpeg",
-    "permission": "owner-authorized private portfolio inclusion"
+    "permission": "owner-authorized private portfolio inclusion, including figures with documented caveats",
+    "presentation": "unchanged original; corrections and limitations appear in adjacent English captions"
   }
 ]

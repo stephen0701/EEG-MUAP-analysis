@@ -8,7 +8,7 @@
 
 The solver applies IRLS to an augmented residual using convolution operators and SciPy `lsmr`. Regularization is `alpha = 0.01 * lambda_max(A.T A)`. The high-level route uses at most 10 IRLS iterations, relative tolerance `1e-6`, and a nonnegative projection after each solve. These calculations were preserved.
 
-CWF sums firing-pattern coefficients weighted by kernel RMS; `CWF_comp` stores per-component weighted signals. Kernel amplitude is not independently calibrated. Recovered components are not confirmed individual motor units.
+CWF sums firing-pattern coefficients weighted by kernel RMS; `CWF_comp` stores per-component weighted signals. The owner confirmed that device EMG input is in μV and kernel amplitudes received no additional calibration. Kernel scale is part of the mathematical model and must not be interpreted as a calibrated individual MUAP voltage, despite the μV label on original kernel plots. Recovered components are not confirmed individual motor units.
 
 ## Candidate spikes and alignment
 
@@ -40,7 +40,7 @@ STA bandpass-filters EEG, extracts windows, and calculates mean, SD, and SEM. Ha
 
 The raw PPC expression is `(abs(sum(exp(1j * phase)))**2 - N) / (N * (N - 1))`. The implementation returns `clip(ppc, 0, 1)`. Negative finite-sample values therefore appear as zero. These outputs should not be described as an unchanged unbiased estimator, and zero cells do not prove absent coupling.
 
-**STA display limitation:** extraction returns a physical `relative_time` vector and a separate `display_time` spanning ±0.3 seconds regardless of window. Plots use `display_time`, so supplied panels cannot be assumed to have correct physical lag axes across bands. They are excluded from README; analysis and images were not silently regenerated or relabeled.
+**STA display limitation:** extraction returns a physical `relative_time` vector and a separate `display_time` spanning ±0.3 regardless of window. The owner confirmed the original figures used this common display axis. They are included in the [results gallery](RESULTS.md) with an explicit warning that the displayed tick labels are not a common physical-lag scale across bands. They cannot support comparisons of actual peak latency or oscillation frequency from that x-axis. Analysis, image pixels, and time axes were not silently regenerated or relabeled.
 
 ## Evidence boundary
 

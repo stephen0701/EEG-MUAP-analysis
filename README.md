@@ -48,6 +48,16 @@ These closely spaced means offer weak band-specific discrimination. The report d
 
 ### Representative figures
 
+**Input and kernel units:** device EMG is measured in μV. The owner confirmed that the mathematically generated kernels received no additional amplitude calibration. Their original μV axes are preserved, but kernel height is a model scale, not a calibrated individual motor-unit voltage.
+
+![Three-kernel single-innervation-zone model and recovered LBF firing patterns](docs/figures/kernel_single_model.jpeg)
+
+**Three-kernel model (source Fig. 6.1a).** Left panels show derivative-Gaussian kernels; right panels show model-derived firing-pattern coefficients for LBF. This illustrates the implementation and its component structure, not validated individual motor-unit recovery.
+
+![Two-kernel multi-innervation-zone model and recovered LBF firing patterns](docs/figures/kernel_multi_model.jpeg)
+
+**Two-kernel model (source Fig. 6.1b).** Opposite-polarity kernels illustrate the alternative innervation-zone model. Component labels do not establish distinct physiological motor units.
+
 ![Candidate spike detection, raster, and inter-spike intervals for an LBF firing-pattern component](docs/figures/spike_detection.jpeg)
 
 **Candidate spike retrieval (source Fig. 6.2).** LBF = left biceps femoris. Threshold, raster, and ISI plots illustrate an algorithm output, not ground-truth motor-unit identification. The source's rate uses the detected-spike time span rather than the full recording duration.
@@ -56,9 +66,7 @@ These closely spaced means offer weak band-specific discrimination. The report d
 
 **PPC, three-kernel model (source Fig. 6.4a).** STS, electrode Cz. Columns are EMG channel/components; `n` counts sampled spike phases, not participants. Values follow the clipped PPC convention. Isolated higher cells do not establish consistent phase locking.
 
-![STS PPC for the two-component multi-innervation-zone model at EEG electrode Cz](docs/figures/ppc_multi_model.jpeg)
-
-**PPC, two-kernel model (source Fig. 6.4b).** The same interpretation applies. Beta is 12-30 Hz and Low Gamma is 30-46 Hz in this code and these figures. [Figure provenance](docs/FIGURES.md) explains why the supplied STA and kernel figures were excluded.
+The [complete results gallery](docs/RESULTS.md) includes both PPC models and both STA figures. The owner confirmed that STA uses a shared display range across different extraction windows: its displayed x-axis cannot be used to compare actual peak latencies across bands. Beta is 12-30 Hz and Low Gamma is 30-46 Hz in these analyses. [Figure provenance](docs/FIGURES.md) records the originals and their interpretation notes.
 
 ## Repository guide
 
@@ -71,6 +79,7 @@ These closely spaced means offer weak band-specific discrimination. The report d
 | [tool_kits/neural_data_movement_segmentor.py](tool_kits/neural_data_movement_segmentor.py) | EEG/CWF/spike segmentation with relative time |
 | [tool_kits/coherence_analysis.py](tool_kits/coherence_analysis.py) | EEG-CWF coherence magnitude |
 | [tool_kits/spike_triggered_analysis.py](tool_kits/spike_triggered_analysis.py) | Main STA/PPC route |
+| [docs/RESULTS.md](docs/RESULTS.md) | Complete kernel, spike, STA, PPC, and coherence presentation |
 | [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md) | Installation, input contract, API examples, and limits |
 
 `movement_state_detector_v2.py` and `spike_triggered_analysis_new.py` are alternative motion/STA implementations. Their filenames do not establish them as the report's final versions. Source paths remain intact to preserve imports and provenance. There is no `eeg_emg_pipeline.py` driver in the inspected repository.
