@@ -1,10 +1,12 @@
 # Reproduction guide
 
+[README](../README.md) · [Methods](METHODS.md) · [Results](RESULTS.md) · [Reproduction](REPRODUCIBILITY.md) · [Project notes](PROJECT_NOTES.md)
+
 ## Status and installation
 
 The repository exposes research functions and executable examples. It contains no `eeg_emg_pipeline.py`, packaged CLI, or participant dataset. Report results have not been reproduced end to end during portfolio preparation.
 
-From the root, run `python -m venv .venv`. Activate it (PowerShell: `.venv\Scripts\Activate.ps1`; bash: `source .venv/bin/activate`), then run `python -m pip install -r requirements.txt`. Requirements reflect imports, not the recovered original experiment environment. See [Verification](VERIFICATION.md) for the checked environment.
+From the root, run `python -m venv .venv`. Activate it (PowerShell: `.venv\Scripts\Activate.ps1`; bash: `source .venv/bin/activate`), then run `python -m pip install -r requirements.txt`. Requirements reflect imports, not the recovered original experiment environment. See [Verification](PROJECT_NOTES.md#verification-record) for the checked environment.
 
 MATLAB EEG preprocessing requires Signal Processing Toolbox, DSP System Toolbox, EEGLAB/ASR, manual ICA, and the acquisition montage. Set `RESEARCH_CHANNEL_LOCATIONS` or `EEGPreprocessor.channel_location_file` to the actual 32-channel `.ced` file. Experiment toolbox versions are unknown.
 
@@ -31,6 +33,20 @@ This is a contract illustration, not example data. Original EEG/EMG exports are 
 - **Products:** nested dictionaries saved in pickle. Load only trusted local pickles; no portable dataset standard is claimed.
 
 Several loaders take the first glob match. Keep only the intended version of each artifact in a trial folder and record selected filenames. Examples write products into trial folders; use a working copy of authorized data outside the checkout.
+
+## Source map
+
+| Stage | Source |
+| --- | --- |
+| EEG preprocessing | `EEG_preprocessing/EEGPreprocessor.m` and its manual-ICA example. |
+| Motion alignment | `tool_kits/movement_state_detector.py`; `movement_state_detector_v2.py` is an alternative route. |
+| EMG preprocessing and deconvolution | `tool_kits/EMG_class.py` and `EMG_to_MUAP.py`. |
+| Candidate spikes | `tool_kits/firing_pattern_to_spikes.py`. |
+| Phase segmentation | `tool_kits/neural_data_movement_segmentor.py`. |
+| EEG–CWF coherence | `tool_kits/coherence_analysis.py`. |
+| STA and PPC | `tool_kits/spike_triggered_analysis.py`; `spike_triggered_analysis_new.py` is an alternative. |
+
+Alternative filenames do not establish the report's final source revision. Existing paths are retained to preserve imports and provenance.
 
 ## Function-level usage
 

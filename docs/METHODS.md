@@ -1,5 +1,7 @@
 # Methods and implementation notes
 
+[README](../README.md) · [Methods](METHODS.md) · [Results](RESULTS.md) · [Reproduction](REPRODUCIBILITY.md) · [Project notes](PROJECT_NOTES.md)
+
 ## EMG deconvolution
 
 `process_single_dataset` in `EMG_to_MUAP.py` reads the first `EMG/*_align.csv`, maps LGL/RGL to LGA/RGA, and processes requested muscle columns independently. Eight input channels do not make this HD-EMG decomposition: each channel is deconvolved separately.
@@ -14,7 +16,7 @@ CWF sums firing-pattern coefficients weighted by kernel RMS; `CWF_comp` stores p
 
 The reported experiment used a 97th-percentile amplitude threshold and 30 ms minimum ISI. `process_single_dataset_spikes` uses those defaults. The lower-level converter also supports manual/MAD thresholds, smoothing, prominence, and amplitude-based ISI suppression. Record those settings rather than assuming they are interchangeable.
 
-The executable example excludes `[0, 8)` seconds; its printed description previously said 0-5 seconds and was corrected. The brief does not establish that exclusion for every result. Rate statistics use the interval between first and last detected spikes, not the full recording.
+The executable example excludes `[0, 8)` seconds. The brief does not establish that exclusion for every result. Rate statistics use the interval between first and last detected spikes, not the full recording.
 
 The main motion detector creates aligned EEG/EMG files and movement results. The neural segmentor interpolates CWF components from 1000 to 500 Hz and uses relative time per phase. Spike trains retain their original sampling rate; spike times are in seconds. Actual synchronization accuracy must be verified from recordings. Four supported phases are STS, STW, steady gait, and WTS.
 

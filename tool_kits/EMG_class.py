@@ -4,7 +4,7 @@ import pandas as pd
 import glob
 import os
 from scipy.io import loadmat
-# 延遲導入matplotlib，只在需要繪圖時導入
+# Import Matplotlib only when plotting is requested.
 # import matplotlib.pyplot as plt
 
 class BandFilter:
@@ -76,7 +76,7 @@ class EMG_DATA:
         self.sep = sep
         self.range_of_muscle = range_of_muscle
         self.Is_outputcsv = Is_outputcsv
-        self.use_raw_data = use_raw_data  # 新增: 是否專門使用RAW數據
+        self.use_raw_data = use_raw_data  # Select whether to use raw data exclusively.
         self.emg_files = self._load_emg_files()
         self.file_info = None
         self.our_data = None
@@ -163,7 +163,7 @@ class EMG_DATA:
                 else:
                     self.normed_our_data[:, i] = self.processor.normalize_data(column_data)
             
-            # 創建歸一化數據的DataFrame
+            # Create a DataFrame for the normalized data.
             self.processed_df = pd.DataFrame(self.normed_our_data, columns=self.our_data.columns[:2 + RANGE_OF_MUSCLE])
         else:
             self.processed_df = pd.DataFrame(self.processed_our_data, columns=self.our_data.columns[:2 + RANGE_OF_MUSCLE])
@@ -259,10 +259,10 @@ class EMG_DATA:
         :param figsize: Size of the figure.
         """
 
-        # 延遲導入matplotlib，避免環境依賴問題
+        # Import Matplotlib lazily to limit plotting dependencies.
         try:
             import matplotlib
-            matplotlib.use('Agg')  # 使用非圖形化後端，避免C++庫兼容性問題
+            matplotlib.use('Agg')  # Use a noninteractive plotting backend.
             import matplotlib.pyplot as plt
         except ImportError:
             raise ImportError("matplotlib is required for plotting functionality")
@@ -334,17 +334,17 @@ class EMG_DATA:
             line_normalized, = ax2.plot(filtered_normalized_time, filtered_normalized_data * 0.1,  # Adjusted size
                                         label='Normalized EMG Data', color='red')  # Changed color to avoid conflict
             
-            ax2.set_ylabel('Normalized Amplitude (scaled)', color='red')  # 將顏色與線條匹配
+            ax2.set_ylabel('Normalized Amplitude (scaled)', color='red')  # Match the axis color to the plotted line.
             ax2.tick_params(axis='y', labelcolor='red')
 
         # Plot additional data even when show_raw=False
         if additional_data is not None:
             additional_series = additional_data.get('data')
             additional_label = additional_data.get('label', 'RHeel_Y')
-            additional_color = additional_data.get('color', 'saddlebrown')  # 暖褐色作為外部數據顏色
+            additional_color = additional_data.get('color', 'saddlebrown')  # Use a warm brown color for the external data.
             
-            ax4 = ax1.twinx()  # 創建副 y 軸，用於顯示外部數據
-            ax4.spines["right"].set_position(("axes", 1.1))  # 移動副 y 軸，避免與另一個 y 軸重疊
+            ax4 = ax1.twinx()  # Create a secondary y-axis for external data.
+            ax4.spines["right"].set_position(("axes", 1.1))  # Offset the secondary y-axis to avoid overlapping axes.
 
             ax3 = ax1.twiny()
 
@@ -353,18 +353,18 @@ class EMG_DATA:
             additional_time_filtered = additional_time[mask_additional]
             additional_values = additional_series.values[mask_additional]
             
-            # 使用 raw 的時間範圍縮放
+            # Use the raw signal's time range.
             additional_time_scaled = (additional_time_filtered - np.min(additional_time_filtered)) / (np.max(additional_time_filtered) - np.min(additional_time_filtered))
             additional_time_scaled *= (np.max(filtered_raw_time) - np.min(filtered_raw_time))
             additional_time_scaled += np.min(filtered_raw_time)
             
-            # 顯示外部數據的幅值
+            # Display the external signal amplitude.
             line_additional, = ax4.plot(additional_time_scaled, additional_values, label=additional_label, color=additional_color, linestyle='-.')
             
             ax4.set_ylabel(f'{additional_label}', color=additional_color)
-            ax4.tick_params(axis='y', labelcolor=additional_color)  # 副 y 軸顏色與線條顏色一致
+            ax4.tick_params(axis='y', labelcolor=additional_color)  # Match the secondary y-axis color to the line.
 
-            # 設置副 x 軸標籤，保留 x 軸
+            # Set the secondary axis label while retaining the x-axis.
             ax3.set_xlim(np.min(additional_time_filtered), np.max(additional_time_filtered))
             ax3.set_xlabel('Timestamp (External Data) (s)', color=additional_color)
             ax3.tick_params(axis='x', labelcolor=additional_color)

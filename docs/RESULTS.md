@@ -1,5 +1,7 @@
 # Results and figure gallery
 
+[README](../README.md) · [Methods](METHODS.md) · [Results](RESULTS.md) · [Reproduction](REPRODUCIBILITY.md) · [Project notes](PROJECT_NOTES.md)
+
 This gallery preserves all seven supplied Chapter 6 figures. The study explores one representative participant/recording. Model components and candidate spikes are not validated individual motor units. The owner confirmed that device EMG is measured in microvolts, kernel amplitudes received no additional calibration, and STA used a common display axis across frequency-specific windows. The figures were not regenerated.
 
 ## 1. Two kernel models and recovered firing patterns
