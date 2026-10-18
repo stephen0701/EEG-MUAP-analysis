@@ -25,7 +25,7 @@ The [methods guide](docs/METHODS.md) documents solver parameters and preserved c
 
 ## Key results
 
-The supplied brief reports mean EEG–CWF coherence values of **0.352–0.370** across five EEG bands, offering weak band-specific discrimination. STA showed modest fluctuations without pronounced band-specific patterns. PPC was near zero for most combinations, with isolated values around **0.350–0.377** rather than consistent phase locking.
+The project research summary reports mean EEG–CWF coherence values of **0.352–0.370** across five EEG bands, offering weak band-specific discrimination. STA showed modest fluctuations without pronounced band-specific patterns. PPC was near zero for most combinations, with isolated values around **0.350–0.377** rather than consistent phase locking.
 
 These observations were not independently recomputed from participant data. The [results gallery](docs/RESULTS.md) retains the exact five-band coherence table, all seven figures, and their interpretation limits.
 
@@ -64,3 +64,5 @@ The reproduction guide identifies the main route and the `movement_state_detecto
 Single-channel surface EMG does not resolve overlapping motor units reliably. Kernel identity, spike thresholds, alignment, case-level sampling, clipped PPC, and the STA display axis limit interpretation. Recordings and ground-truth motor-unit identities are unavailable. HD-EMG, validated decomposition, sensitivity analysis, and broader validation remain future work.
 
 [Project notes](docs/PROJECT_NOTES.md) consolidate attribution, completed software checks, and data/release status. Related project: [EEG-muscle-synergies-analysis](https://github.com/stephen0701/EEG-muscle-synergies-analysis).
+
+Academic citation metadata is available in [`CITATION.cff`](CITATION.cff). See [citation and reuse](docs/PROJECT_NOTES.md#citation-and-reuse) for the no-license status and third-party rights.

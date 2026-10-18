@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "To cite this research software in academic work, use the following metadata."
+type: software
+title: "Exploratory EEG–MUAP Analysis"
+authors:
+  - family-names: "Wang"
+    given-names: "Sing-Hao"
+url: "https://github.com/stephen0701/EEG-MUAP-analysis"
+repository-code: "https://github.com/stephen0701/EEG-MUAP-analysis"

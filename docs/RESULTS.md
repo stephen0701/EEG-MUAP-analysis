@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Methods](METHODS.md) · [Results](RESULTS.md) · [Reproduction](REPRODUCIBILITY.md) · [Project notes](PROJECT_NOTES.md)
 
-This gallery preserves all seven supplied Chapter 6 figures. The study explores one representative participant/recording. Model components and candidate spikes are not validated individual motor units. The owner confirmed that device EMG is measured in microvolts, kernel amplitudes received no additional calibration, and STA used a common display axis across frequency-specific windows. The figures were not regenerated.
+This gallery preserves all seven Chapter 6 figures. The study explores one representative participant/recording. Model components and candidate spikes are not validated individual motor units. The author confirmed that device EMG is measured in microvolts, kernel amplitudes received no additional calibration, and STA used a common display axis across frequency-specific windows. The figures were not regenerated.
 
 ## 1. Two kernel models and recovered firing patterns
 
@@ -24,7 +24,7 @@ This gallery preserves all seven supplied Chapter 6 figures. The study explores 
 
 ## 3. Spike-triggered averages
 
-**Time-axis clarification for Figs. 6.3a/b:** the owner confirmed that frequency-specific windows were mapped onto a common ±0.3 display range. The tick labels therefore **must not be interpreted as common physical spike-relative seconds across bands**. Do not compare absolute peak latency, oscillation frequency, or window duration using these displayed x-axes. The images are retained for descriptive inspection of the original analysis; a physical-lag analysis requires replotting against the actual time vectors.
+**Time-axis clarification for Figs. 6.3a/b:** the author confirmed that frequency-specific windows were mapped onto a common ±0.3 display range. The tick labels therefore **must not be interpreted as common physical spike-relative seconds across bands**. Do not compare absolute peak latency, oscillation frequency, or window duration using these displayed x-axes. The images are retained for descriptive inspection of the original analysis; a physical-lag analysis requires replotting against the actual time vectors.
 
 | Band | Actual extraction half-window in the archived source | Common displayed range |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ This gallery preserves all seven supplied Chapter 6 figures. The study explores 
 
 ## 5. Reported coherence summary
 
-The supplied brief transcribes report Table 6.1 as follows. The source uses coherence magnitude (`sqrt(MSC)`); these values are not percentage correlations or newly recomputed results. Original aggregation logs and source measurements remain unavailable.
+The project research summary transcribes report Table 6.1 as follows. The source uses coherence magnitude (`sqrt(MSC)`); these values are not percentage correlations or newly recomputed results. Original aggregation logs and source measurements remain unavailable.
 
 | EEG band | Reported mean EEG-CWF coherence |
 | --- | ---: |

@@ -4,9 +4,9 @@
 
 ## Attribution and sources
 
-**Sing-Hao Wang** primarily implemented the code, integrated the workflow, analyzed the results, and prepared the research presentation. **Dr. Tsai** contributed clinical interpretation. These roles were confirmed by the project owner; they do not assign module-level authorship or credit upstream algorithms to this project.
+**Sing-Hao Wang** primarily implemented the code, integrated the workflow, analyzed the results, and prepared the research presentation. **Dr. Tsai** contributed clinical interpretation. These roles follow the project contribution statement; they do not assign module-level authorship or credit upstream algorithms to this project.
 
-**Research source:** Sing-Hao Wang, *Toward Digital Twin-Centered Human-Exoskeleton Collaboration: From Multi-Resolution Corticomuscular Coupling Analyses to an Incremental Mixture-of-Experts Locomotion Controller*, undergraduate capstone report, June 2026, Chapter 6, pp. 53–61. Scope and Table 6.1 values were transcribed from the supplied `RESEARCH_BRIEF.md`; the full report, source result table, and aggregation logs were not independently verified.
+**Research source:** Sing-Hao Wang, *Toward Digital Twin-Centered Human-Exoskeleton Collaboration: From Multi-Resolution Corticomuscular Coupling Analyses to an Incremental Mixture-of-Experts Locomotion Controller*, undergraduate capstone report, June 2026, Chapter 6, pp. 53–61. Scope and Table 6.1 values were transcribed from the project research summary (`RESEARCH_BRIEF.md`); the full report, source result table, and aggregation logs were not independently verified.
 
 External methods and software:
 
@@ -19,13 +19,19 @@ The source's single-motor-unit corticomuscular-coherence reference lacks a compl
 
 ## Data and release status
 
-The owner confirmed on **October 18, 2026** that both research repositories are approved for public release. **Repository visibility remains unchanged pending the owner's review of this cleanup.** This confirmation supersedes the earlier private-portfolio-only wording; it does not initiate a visibility change.
+Public release of both research repositories was approved on **October 18, 2026**. Participant recordings remain outside the repositories.
 
-All seven authorized Chapter 6 figures remain byte-for-byte unchanged in `figures/`, with the original kernel-unit and STA-axis caveats retained beside the figures. The earlier undocumented externally hosted attachment is not used as evidence. No participant recordings, identifiers, or new metadata tables were added, and the supplied brief remains outside the repository.
+All seven authorized Chapter 6 figures remain byte-for-byte unchanged in `figures/`, with the original kernel-unit and STA-axis caveats retained beside the figures. The earlier undocumented externally hosted attachment is not used as evidence. No participant recordings, identifiers, or new metadata tables were added, and the project research summary remains outside the repository.
 
 Keep authorized data and generated products outside the checkout. `.gitignore` covers common recording formats, pickles, NumPy arrays, motion files, spreadsheets, videos, local settings, and result directories. It does not remove tracked content or protect Git history automatically. Load only trusted local pickle files. No history rewrite was performed.
 
-Public-release approval does not select a software or figure license. No new license is inferred or assigned, and external software retains its own terms.
+## Citation and reuse
+
+Use the root [`CITATION.cff`](../CITATION.cff) for academic citation metadata. Sing-Hao Wang is listed as the verified primary software author; other research contributions remain credited above. No DOI, publication venue, software version, or additional author is inferred.
+
+The original project code is provided **without a license**. Public visibility does not grant a general license to reuse, modify, or redistribute it; applicable law and GitHub's platform terms still apply. Academic citation guidance is separate from legal permission, and `CITATION.cff` does not impose a universally enforceable citation condition. See [GitHub's licensing guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository).
+
+Third-party software, figures, and the project report retain their respective ownership and applicable terms. Citation metadata does not alter those rights or grant permission on another contributor's behalf.
 
 ## Verification record
 
@@ -53,4 +59,4 @@ Those synthetic checks were not rerun for this comment-only source cleanup. Thei
 
 MATLAB R2024a startup and MathWorks-service errors prevented static diagnostics and EEG preprocessing execution. The original montage, complete EEGLAB/ASR environment, and manual ICA record were not supplied as a runnable experiment.
 
-All seven images were visually checked in the earlier review. The owner confirmed input EMG units, absence of extra kernel calibration, and the common STA display axis. Those clarifications and the reported coherence means remain distinct from independent data verification. See [Methods](METHODS.md) for conventions and unresolved edge cases.
+All seven images were visually checked in the earlier review. The author confirmed input EMG units, absence of extra kernel calibration, and the common STA display axis. Those clarifications and the reported coherence means remain distinct from independent data verification. See [Methods](METHODS.md) for conventions and unresolved edge cases.

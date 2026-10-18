@@ -10,13 +10,13 @@
 
 The solver applies IRLS to an augmented residual using convolution operators and SciPy `lsmr`. Regularization is `alpha = 0.01 * lambda_max(A.T A)`. The high-level route uses at most 10 IRLS iterations, relative tolerance `1e-6`, and a nonnegative projection after each solve. These calculations were preserved.
 
-CWF sums firing-pattern coefficients weighted by kernel RMS; `CWF_comp` stores per-component weighted signals. The owner confirmed that device EMG input is in μV and kernel amplitudes received no additional calibration. Kernel scale is part of the mathematical model and must not be interpreted as a calibrated individual MUAP voltage, despite the μV label on original kernel plots. Recovered components are not confirmed individual motor units.
+CWF sums firing-pattern coefficients weighted by kernel RMS; `CWF_comp` stores per-component weighted signals. The author confirmed that device EMG input is in μV and kernel amplitudes received no additional calibration. Kernel scale is part of the mathematical model and must not be interpreted as a calibrated individual MUAP voltage, despite the μV label on original kernel plots. Recovered components are not confirmed individual motor units.
 
 ## Candidate spikes and alignment
 
 The reported experiment used a 97th-percentile amplitude threshold and 30 ms minimum ISI. `process_single_dataset_spikes` uses those defaults. The lower-level converter also supports manual/MAD thresholds, smoothing, prominence, and amplitude-based ISI suppression. Record those settings rather than assuming they are interchangeable.
 
-The executable example excludes `[0, 8)` seconds. The brief does not establish that exclusion for every result. Rate statistics use the interval between first and last detected spikes, not the full recording.
+The executable example excludes `[0, 8)` seconds. The research summary does not establish that exclusion for every result. Rate statistics use the interval between first and last detected spikes, not the full recording.
 
 The main motion detector creates aligned EEG/EMG files and movement results. The neural segmentor interpolates CWF components from 1000 to 500 Hz and uses relative time per phase. Spike trains retain their original sampling rate; spike times are in seconds. Actual synchronization accuracy must be verified from recordings. Four supported phases are STS, STW, steady gait, and WTS.
 
@@ -24,7 +24,7 @@ The main motion detector creates aligned EEG/EMG files and movement results. The
 
 `CoherenceAnalyzer.compute_coherence` calls SciPy `signal.coherence` with `nperseg=256`, `noverlap=128`, `nfft=512`, then takes its square root and retains frequencies up to 50 Hz. Higher-level analysis skips pairs shorter than 512 samples. Band means include both endpoints.
 
-This is coherence magnitude, not magnitude-squared coherence or a percentage correlation. No significance threshold is computed. Table 6.1 means are retained as reported in the supplied brief; exact aggregation and original source revision cannot be independently established.
+This is coherence magnitude, not magnitude-squared coherence or a percentage correlation. No significance threshold is computed. Table 6.1 means are retained as reported in the project research summary; exact aggregation and original source revision cannot be independently established.
 
 | Band | Current coherence/STA/PPC defaults (Hz) |
 | --- | --- |
@@ -42,8 +42,8 @@ STA bandpass-filters EEG, extracts windows, and calculates mean, SD, and SEM. Ha
 
 The raw PPC expression is `(abs(sum(exp(1j * phase)))**2 - N) / (N * (N - 1))`. The implementation returns `clip(ppc, 0, 1)`. Negative finite-sample values therefore appear as zero. These outputs should not be described as an unchanged unbiased estimator, and zero cells do not prove absent coupling.
 
-**STA display limitation:** extraction returns a physical `relative_time` vector and a separate `display_time` spanning ±0.3 regardless of window. The owner confirmed the original figures used this common display axis. They are included in the [results gallery](RESULTS.md) with an explicit warning that the displayed tick labels are not a common physical-lag scale across bands. They cannot support comparisons of actual peak latency or oscillation frequency from that x-axis. Analysis, image pixels, and time axes were not silently regenerated or relabeled.
+**STA display limitation:** extraction returns a physical `relative_time` vector and a separate `display_time` spanning ±0.3 regardless of window. The author confirmed the original figures used this common display axis. They are included in the [results gallery](RESULTS.md) with an explicit warning that the displayed tick labels are not a common physical-lag scale across bands. They cannot support comparisons of actual peak latency or oscillation frequency from that x-axis. Analysis, image pixels, and time axes were not silently regenerated or relabeled.
 
 ## Evidence boundary
 
-The brief supports reported scope and summary findings; image inspection supports descriptive labels and isolated PPC values. Recordings, ground-truth motor-unit identities, complete parameter logs, and the underlying Table 6.1 data are unavailable. Software verification does not establish scientific or clinical validation.
+The research summary supports reported scope and summary findings; image inspection supports descriptive labels and isolated PPC values. Recordings, ground-truth motor-unit identities, complete parameter logs, and the underlying Table 6.1 data are unavailable. Software verification does not establish scientific or clinical validation.
